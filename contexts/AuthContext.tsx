@@ -203,7 +203,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setError(null);
 
     try {
-      // Mock API call - accepts any 6-digit code
+      // Mock API call - accepts any 4-digit code
       await new Promise((resolve) => setTimeout(resolve, 800));
       setOtpVerified(true);
     } catch (err) {

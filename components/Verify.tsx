@@ -52,8 +52,8 @@ const Verify: React.FC = () => {
   };
 
   const handleOtpChange = (value: string) => {
-    // Only allow digits and max 6 characters
-    const digitsOnly = value.replace(/\D/g, "").slice(0, 6);
+    // Only allow digits and max 4 characters
+    const digitsOnly = value.replace(/\D/g, "").slice(0, 4);
     setOtp(digitsOnly);
   };
 
@@ -62,8 +62,8 @@ const Verify: React.FC = () => {
     setLocalError(null);
     setSuccessMessage("");
 
-    if (otp.length !== 6) {
-      setLocalError("کد تأیید باید 6 رقم باشد");
+    if (otp.length !== 4) {
+      setLocalError("کد تأیید باید 4 رقم باشد");
       return;
     }
 
@@ -150,7 +150,7 @@ const Verify: React.FC = () => {
           <p className="text-[#B3B3B3] text-sm">
             {isPasswordStep
               ? "رمز عبور جدید خود را وارد کنید"
-              : "کد 6 رقمی ارسال شده را وارد کنید"}
+              : "کد 4 رقمی ارسال شده را وارد کنید"}
           </p>
         </div>
 
@@ -200,7 +200,7 @@ const Verify: React.FC = () => {
                   کد تأیید
                 </label>
                 <div dir="ltr" className="flex gap-2 justify-center mb-4">
-                  {[0, 1, 2, 3, 4, 5].map((index) => (
+                  {[0, 1, 2, 3].map((index) => (
                     <input
                       key={index}
                       type="text"
@@ -214,7 +214,7 @@ const Verify: React.FC = () => {
                         // Auto-focus next input
                         if (
                           e.target.value &&
-                          index < 5 &&
+                          index < 3 &&
                           e.currentTarget.nextElementSibling
                         ) {
                           (
@@ -295,7 +295,7 @@ const Verify: React.FC = () => {
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isLoading || otp.length !== 6}
+                disabled={isLoading || otp.length !== 4}
                 className="w-full mt-6 px-4 py-3 bg-[#1DB954] hover:bg-[#1ED760] disabled:bg-[#282828] disabled:text-[#B3B3B3] text-black font-bold rounded-md transition-all duration-200 flex items-center justify-center gap-2"
               >
                 {isLoading ? (

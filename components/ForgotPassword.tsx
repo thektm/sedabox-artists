@@ -102,7 +102,6 @@ const ForgotPassword: React.FC = () => {
               <PhoneInput
                 value={phone}
                 onChange={setPhone}
-                placeholder="09123456789"
                 className="w-full bg-[#282828] border border-[#3E3E3E] rounded-md px-4 py-3 text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-colors"
               />
             </div>
