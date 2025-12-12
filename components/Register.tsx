@@ -58,10 +58,10 @@ const Register: React.FC = () => {
             <img src="/logo.png" alt="SedaBox" className="h-16 w-auto" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
-            ثبت نام در صدا باکس
+            شروع کنید
           </h1>
           <p className="text-[#B3B3B3] text-sm">
-            برای شروع، حساب کاربری خود را ایجاد کنید
+            حساب هنرمند خود را در صدا باکس ایجاد کنید
           </p>
         </div>
 

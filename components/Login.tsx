@@ -54,10 +54,10 @@ const Login: React.FC = () => {
             <img src="/logo.png" alt="SedaBox" className="h-16 w-auto" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
-            ورود به صدا باکس
+            خوش آمدید
           </h1>
           <p className="text-[#B3B3B3] text-sm">
-            برای ادامه، وارد حساب کاربری خود شوید
+            به داشبورد هنرمندان صدا باکس خوش آمدید
           </p>
         </div>
 
