@@ -1,15 +1,41 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'Vazir';
+  src: url('/vazir.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Vazir';
+  src: url('/vazir-semibold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Vazir';
+  src: url('/vazir-bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Force dark theme by default so all pages render with dark background
+   regardless of the device's `prefers-color-scheme` setting. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0a; /* dark background */
+  --foreground: #ededed; /* light foreground */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: 'Vazir', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Monaco, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,5 +48,248 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Vazir', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Mobile viewport height fix for dynamic browser UI */
+:root {
+  --vh: 1vh;
+}
+
+/* Prevent overscroll and fix mobile viewport */
+html {
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: none;
+  height: 100%;
+}
+
+/* Fix mobile viewport to use actual viewport height */
+@supports (-webkit-touch-callout: none) {
+  /* iOS Safari specific */
+  html {
+    height: -webkit-fill-available;
+  }
+  body {
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* Prevent pull-to-refresh and overscroll */
+body {
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+/* Utility to hide native scrollbars while keeping scrolling functional */
+.hide-scrollbar {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Music Player Playing Bars Animation */
+@keyframes playing-bar {
+  0%, 100% {
+    height: 20%;
+  }
+  50% {
+    height: 100%;
+  }
+}
+
+.playing-bar {
+  animation: playing-bar 0.8s ease-in-out infinite;
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Modern custom scrollbars for PC mode */
+@media (min-width: 768px) {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) var(--background);
+  }
+
+  html::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  html::-webkit-scrollbar-track {
+    background: var(--background);
+  }
+
+  html::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+  }
+
+  html::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5);
+  }
+}
+
+/* PC Compact Mode - 15% smaller content */
+@media (min-width: 1024px) {
+  .pc-compact {
+    font-size: 85%;
+    line-height: 1.3;
+  }
+  
+  .pc-compact .text-4xl {
+    font-size: 2.25rem; /* 3rem * 0.85 */
+  }
+  
+  .pc-compact .text-3xl {
+    font-size: 1.6875rem; /* 2.25rem * 0.85 */
+  }
+  
+  .pc-compact .text-2xl {
+    font-size: 1.275rem; /* 1.5rem * 0.85 */
+  }
+  
+  .pc-compact .text-xl {
+    font-size: 1.1875rem; /* 1.25rem * 0.85 */
+  }
+  
+  .pc-compact .text-lg {
+    font-size: 1.1025rem; /* 1.125rem * 0.85 */
+  }
+  
+  .pc-compact .text-base {
+    font-size: 0.935rem; /* 1rem * 0.85 */
+  }
+  
+  .pc-compact .text-sm {
+    font-size: 0.8075rem; /* 0.875rem * 0.85 */
+  }
+  
+  .pc-compact .text-xs {
+    font-size: 0.68rem; /* 0.75rem * 0.85 */
+  }
+  
+  .pc-compact .p-8 {
+    padding: 1.36rem; /* 1.6rem * 0.85 */
+  }
+  
+  .pc-compact .p-6 {
+    padding: 1.02rem; /* 1.2rem * 0.85 */
+  }
+  
+  .pc-compact .px-8 {
+    padding-left: 1.36rem;
+    padding-right: 1.36rem;
+  }
+  
+  .pc-compact .px-6 {
+    padding-left: 1.02rem;
+    padding-right: 1.02rem;
+  }
+  
+  .pc-compact .py-8 {
+    padding-top: 1.36rem;
+    padding-bottom: 1.36rem;
+  }
+  
+  .pc-compact .py-6 {
+    padding-top: 1.02rem;
+    padding-bottom: 1.02rem;
+  }
+  
+  .pc-compact .py-3 {
+    padding-top: 0.51rem;
+    padding-bottom: 0.51rem;
+  }
+  
+  .pc-compact .mb-8 {
+    margin-bottom: 1.36rem;
+  }
+  
+  .pc-compact .mb-6 {
+    margin-bottom: 1.02rem;
+  }
+  
+  .pc-compact .mb-4 {
+    margin-bottom: 0.68rem;
+  }
+  
+  .pc-compact .mb-2 {
+    margin-bottom: 0.34rem;
+  }
+  
+  .pc-compact .mt-8 {
+    margin-top: 1.36rem;
+  }
+  
+  .pc-compact .mt-6 {
+    margin-top: 1.02rem;
+  }
+  
+  .pc-compact .mt-4 {
+    margin-top: 0.68rem;
+  }
+  
+  .pc-compact .mt-3 {
+    margin-top: 0.51rem;
+  }
+  
+  .pc-compact .gap-6 {
+    gap: 1.02rem;
+  }
+  
+  .pc-compact .gap-4 {
+    gap: 0.68rem;
+  }
+  
+  .pc-compact .gap-3 {
+    gap: 0.51rem;
+  }
+  
+  .pc-compact .gap-2 {
+    gap: 0.34rem;
+  }
+  
+  .pc-compact .w-12 {
+    width: 2.52rem; /* 3rem * 0.85 */
+  }
+  
+  .pc-compact .h-12 {
+    height: 2.52rem;
+  }
+  
+  .pc-compact .w-10 {
+    width: 2.1rem; /* 2.5rem * 0.85 */
+  }
+  
+  .pc-compact .h-10 {
+    height: 2.1rem;
+  }
+  
+  .pc-compact .w-8 {
+    width: 1.68rem; /* 2rem * 0.85 */
+  }
+  
+  .pc-compact .h-8 {
+    height: 1.68rem;
+  }
 }
