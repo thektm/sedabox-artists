@@ -17,6 +17,7 @@ import ArtistVerificationModal from "./verification/ArtistVerificationModal";
 import PendingVerificationModal from "./verification/PendingVerificationModal";
 import SongDetail from "./SongDetail";
 import AlbumDetail from "./AlbumDetail";
+import TermsAndConditions from "./TermsAndConditions";
 
 const AppRouter: React.FC = () => {
   const { currentPage, currentParams, navigateTo } = useNavigation();
@@ -134,6 +135,7 @@ const AppRouter: React.FC = () => {
         {renderPageContainer("analytics", <Analytics />)}
         {renderPageContainer("financial", <Financial />)}
         {renderPageContainer("settings", <Settings />)}
+        {renderPageContainer("terms", <TermsAndConditions />)}
         {renderPageContainer("search", <div>Search Screen</div>)}
         {renderPageContainer("playlists", <div>Playlists Screen</div>)}
         {renderPageContainer("profile", <div>Profile Screen</div>)}

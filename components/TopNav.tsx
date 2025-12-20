@@ -334,6 +334,7 @@ const TopNav: React.FC = () => {
                 { id: "analytics", label: "تحلیل و آمار", icon: "📊" },
                 { id: "financial", label: "گزارش مالی", icon: "💰" },
                 { id: "settings", label: "تنظیمات", icon: "⚙️" },
+                { id: "terms", label: "شرایط و ضوابط", icon: "📄" },
               ].map((item) => (
                 <li key={item.id}>
                   <button

@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigation } from "../contexts/NavigationContext";
 import PhoneInput from "./PhoneInput";
+import TermsModal from "./TermsModal";
 
 const Register: React.FC = () => {
   const { navigateTo } = useNavigation();
@@ -12,6 +13,8 @@ const Register: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
+  const [isTermsAccepted, setIsTermsAccepted] = useState(false);
+  const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,6 +31,10 @@ const Register: React.FC = () => {
     }
     if (password.length < 6) {
       setLocalError("رمز عبور باید حداقل 6 کاراکتر باشد");
+      return;
+    }
+    if (!isTermsAccepted) {
+      setLocalError("لطفاً ابتدا شرایط و ضوابط را بپذیرید");
       return;
     }
 
@@ -148,11 +155,44 @@ const Register: React.FC = () => {
               </div>
             </div>
 
+            {/* Terms and Conditions */}
+            <div className="flex items-start gap-3 mt-4">
+              <div className="flex items-center h-5">
+                <input
+                  id="terms"
+                  type="checkbox"
+                  checked={isTermsAccepted}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setIsTermsModalOpen(true);
+                    } else {
+                      setIsTermsAccepted(false);
+                    }
+                  }}
+                  className="w-5 h-5 bg-[#121212] border-[#282828] rounded text-[#1DB954] focus:ring-[#1DB954] focus:ring-offset-[#121212] cursor-pointer"
+                />
+              </div>
+              <label
+                htmlFor="terms"
+                className="text-sm text-[#B3B3B3] cursor-pointer select-none leading-relaxed"
+              >
+                من{" "}
+                <button
+                  type="button"
+                  onClick={() => setIsTermsModalOpen(true)}
+                  className="text-[#1DB954] hover:underline font-semibold"
+                >
+                  شرایط و ضوابط
+                </button>{" "}
+                استفاده از صدا باکس را مطالعه کرده و می‌پذیرم.
+              </label>
+            </div>
+
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-full mt-6 px-4 py-3 bg-[#1DB954] hover:bg-[#1ED760] disabled:bg-[#282828] disabled:text-[#B3B3B3] text-black font-bold rounded-md transition-all duration-200 flex items-center justify-center gap-2"
+              disabled={isLoading || !isTermsAccepted}
+              className="w-full mt-6 px-4 py-3 bg-[#1DB954] hover:bg-[#1ED760] disabled:bg-[#282828] disabled:text-[#B3B3B3] disabled:cursor-not-allowed text-black font-bold rounded-md transition-all duration-200 flex items-center justify-center gap-2"
             >
               {isLoading ? (
                 <>
@@ -201,6 +241,15 @@ const Register: React.FC = () => {
           با ثبت نام شما شرایط و قوانین استفاده را می‌پذیرید
         </p>
       </div>
+
+      <TermsModal
+        open={isTermsModalOpen}
+        onClose={() => setIsTermsModalOpen(false)}
+        onConfirm={() => {
+          setIsTermsAccepted(true);
+          setIsTermsModalOpen(false);
+        }}
+      />
     </div>
   );
 };

@@ -1,0 +1,7 @@
+[2025-12-17T10:59:19.055Z] Reverse proxy server listening on port 3001, proxying to https://ipnumberia.com
+[2025-12-17T10:59:19.058Z] Logs are saved to D:\Repositories\soundBox\sedabox-artist2\proxy.log
+[2025-12-17T10:59:40.579Z] Proxying GET /home to https://ipnumberia.com/home
+[2025-12-17T10:59:41.435Z] Response: 301 Moved Permanently
+[2025-12-17T10:59:41.436Z] Headers: {"set-cookie":["PHPSESSID=9dndiqhe239nlm0inbj39v5h54; path=/; domain=ipnumberia.com; secure; HttpOnly; SameSite=None"],"expires":"Thu, 19 Nov 1981 08:52:00 GMT","cache-control":"no-store, no-cache, must-revalidate","pragma":"no-cache","location":"https://ipnumberia.com/home/","content-type":"text/html; charset=UTF-8","content-length":"0","date":"Wed, 17 Dec 2025 10:59:41 GMT","server":"LiteSpeed","alt-svc":"h3=\":443\"; ma=2592000, h3-29=\":443\"; ma=2592000, h3-Q050=\":443\"; ma=2592000, h3-Q046=\":443\"; ma=2592000, h3-Q043=\":443\"; ma=2592000, quic=\":443\"; ma=2592000; v=\"43,46\"","connection":"close"}
+[2025-12-17T10:59:41.438Z] Response body length: 0 characters
+[2025-12-17T10:59:41.439Z] Response body: 
