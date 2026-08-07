@@ -308,3 +308,155 @@ body {
     height: 1.68rem;
   }
 }
+
+/* Production image cropper overrides. Cropper.js keeps the crop inside the real image;
+   these rules enlarge touch hit targets without visually bloating the frame. */
+.image-cropper-shell .cropper-container {
+  width: 100% !important;
+  height: 100% !important;
+  direction: ltr;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.image-cropper-shell .cropper-view-box {
+  outline: 2px solid #1DB954;
+  outline-color: rgba(29, 185, 84, 0.95);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset;
+}
+
+.image-cropper-shell .cropper-dashed {
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+.image-cropper-shell .cropper-center::before,
+.image-cropper-shell .cropper-center::after {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.image-cropper-shell .cropper-face {
+  background-color: transparent;
+}
+
+.image-cropper-shell .cropper-modal {
+  background-color: #000;
+  opacity: 0.62;
+}
+
+/* Four full edge hit areas make side-resizing dependable with both mouse and touch. */
+.image-cropper-shell .cropper-line {
+  background-color: transparent;
+  opacity: 1;
+}
+.image-cropper-shell .cropper-line.line-e,
+.image-cropper-shell .cropper-line.line-w {
+  width: 24px;
+  top: 0;
+  bottom: 0;
+}
+.image-cropper-shell .cropper-line.line-e { right: -12px; }
+.image-cropper-shell .cropper-line.line-w { left: -12px; }
+.image-cropper-shell .cropper-line.line-n,
+.image-cropper-shell .cropper-line.line-s {
+  height: 24px;
+  left: 0;
+  right: 0;
+}
+.image-cropper-shell .cropper-line.line-n { top: -12px; }
+.image-cropper-shell .cropper-line.line-s { bottom: -12px; }
+
+.image-cropper-shell .cropper-point {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background-color: #1DB954;
+  opacity: 1;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+}
+.image-cropper-shell .cropper-point.point-n { top: -8px; margin-left: -8px; }
+.image-cropper-shell .cropper-point.point-s { bottom: -8px; margin-left: -8px; }
+.image-cropper-shell .cropper-point.point-e { right: -8px; margin-top: -8px; }
+.image-cropper-shell .cropper-point.point-w { left: -8px; margin-top: -8px; }
+.image-cropper-shell .cropper-point.point-ne { right: -8px; top: -8px; }
+.image-cropper-shell .cropper-point.point-nw { left: -8px; top: -8px; }
+.image-cropper-shell .cropper-point.point-se { right: -8px; bottom: -8px; }
+.image-cropper-shell .cropper-point.point-sw { left: -8px; bottom: -8px; }
+
+@media (pointer: coarse), (max-width: 767px) {
+  .image-cropper-shell .cropper-point {
+    width: 24px;
+    height: 24px;
+  }
+  .image-cropper-shell .cropper-point.point-n { top: -12px; margin-left: -12px; }
+  .image-cropper-shell .cropper-point.point-s { bottom: -12px; margin-left: -12px; }
+  .image-cropper-shell .cropper-point.point-e { right: -12px; margin-top: -12px; }
+  .image-cropper-shell .cropper-point.point-w { left: -12px; margin-top: -12px; }
+  .image-cropper-shell .cropper-point.point-ne { right: -12px; top: -12px; }
+  .image-cropper-shell .cropper-point.point-nw { left: -12px; top: -12px; }
+  .image-cropper-shell .cropper-point.point-se { right: -12px; bottom: -12px; }
+  .image-cropper-shell .cropper-point.point-sw { left: -12px; bottom: -12px; }
+
+  .image-cropper-shell .cropper-line.line-e,
+  .image-cropper-shell .cropper-line.line-w { width: 36px; }
+  .image-cropper-shell .cropper-line.line-e { right: -18px; }
+  .image-cropper-shell .cropper-line.line-w { left: -18px; }
+  .image-cropper-shell .cropper-line.line-n,
+  .image-cropper-shell .cropper-line.line-s { height: 36px; }
+  .image-cropper-shell .cropper-line.line-n { top: -18px; }
+  .image-cropper-shell .cropper-line.line-s { bottom: -18px; }
+}
+
+/* Responsive cropper modal layout.
+   Only the content body scrolls; Cropper.js keeps exclusive touch handling inside
+   its own .cropper-container so pinch/drag/resize gestures cannot become page scroll. */
+.image-cropper-backdrop {
+  overflow: hidden;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.image-cropper-scroll-body {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+/* A stable, measurable stage is essential when Cropper.js is created in a modal. */
+.image-cropper-stage {
+  width: 100%;
+  height: clamp(280px, 50vh, 620px);
+  min-height: 280px;
+}
+
+@media (min-width: 640px) {
+  .image-cropper-stage {
+    height: clamp(340px, 54vh, 640px);
+    min-height: 340px;
+  }
+}
+
+@media (max-width: 420px) {
+  .image-cropper-tool-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .image-cropper-tool-grid > button:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-height: 680px) {
+  .image-cropper-stage {
+    height: clamp(250px, 44vh, 360px);
+    min-height: 250px;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .image-cropper-stage {
+    height: clamp(220px, 58vh, 300px);
+    min-height: 220px;
+  }
+}

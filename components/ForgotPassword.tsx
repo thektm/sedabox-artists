@@ -1,34 +1,41 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigation } from "../contexts/NavigationContext";
+import { useToast } from "../contexts/ToastContext";
 import PhoneInput from "./PhoneInput";
+import { toPersianMessage } from "../lib/faMessages";
 
 const ForgotPassword: React.FC = () => {
   const { navigateTo } = useNavigation();
-  const { sendOtp, isLoading, error } = useAuth();
+  const { sendOtp, isLoading, error, clearError } = useAuth();
+  const { showToast } = useToast();
   const [phone, setPhone] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState("");
 
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    clearError();
     setLocalError(null);
-    setSuccessMessage("");
 
     if (!phone.trim()) {
-      setLocalError("لطفاً شماره تلفن خود را وارد کنید");
+      const message = "شماره تلفن خود را وارد کنید.";
+      setLocalError(message);
+      showToast(message, "error");
       return;
     }
 
     try {
-      await sendOtp(phone);
-      setSuccessMessage("کد تأیید ارسال شد");
-      // Navigate to Verify page with reset mode
-      setTimeout(() => {
-        navigateTo("verify", { mode: "reset", phone: phone });
-      }, 500);
-    } catch (err) {
-      setLocalError(error || "خطا در ارسال کد");
+      const result = await sendOtp(phone);
+      showToast("کد تأیید ارسال شد.", "success");
+      navigateTo("verify", {
+        mode: "reset",
+        phone,
+        resendAfterSeconds: result.resendAfterSeconds ?? 60,
+      });
+    } catch (err: any) {
+      const message = toPersianMessage(err?.message, "ارسال کد تأیید انجام نشد.");
+      setLocalError(message);
+      showToast(message, "error");
     }
   };
 
@@ -37,15 +44,12 @@ const ForgotPassword: React.FC = () => {
       className="min-h-screen bg-[#121212] flex items-center justify-center p-4 rtl"
       dir="rtl"
     >
-      {/* Spotify-style background */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#121212] via-[#181818] to-[#121212]"></div>
 
-      {/* Content */}
       <div className="relative z-10 w-full max-w-md">
-        {/* Logo and Header */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-8">
-            <img src="/logo.png" alt="SedaBox" className="h-16 w-auto" />
+            <img src="/logo.png" alt="صداباکس" className="h-16 w-auto" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
             بازیابی رمز عبور
@@ -55,11 +59,9 @@ const ForgotPassword: React.FC = () => {
           </p>
         </div>
 
-        {/* Card */}
         <div className="bg-[#181818] border border-[#282828] rounded-lg p-8 shadow-2xl">
-          {/* Error Message */}
           {(localError || error) && (
-            <div className="mb-6 p-4 bg-[#450A0A] border border-[#B91C1C] rounded-md flex items-center gap-3">
+            <div className="mb-6 p-4 bg-[#450A0A] border border-[#B91C1C] rounded-md flex items-center gap-3" dir="rtl">
               <svg
                 className="w-5 h-5 text-[#EF4444] flex-shrink-0"
                 fill="currentColor"
@@ -71,29 +73,12 @@ const ForgotPassword: React.FC = () => {
                   clipRule="evenodd"
                 />
               </svg>
-              <p className="text-[#EF4444] text-sm">{localError || error}</p>
+              <p className="text-[#EF4444] text-sm text-right">
+                {localError || error}
+              </p>
             </div>
           )}
 
-          {/* Success Message */}
-          {successMessage && (
-            <div className="mb-6 p-4 bg-[#0F5132] border border-[#198754] rounded-md flex items-center gap-3">
-              <svg
-                className="w-5 h-5 text-[#22C55E] flex-shrink-0"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <p className="text-[#22C55E] text-sm">{successMessage}</p>
-            </div>
-          )}
-
-          {/* Form */}
           <form onSubmit={handlePhoneSubmit} className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-white mb-2">
@@ -102,6 +87,7 @@ const ForgotPassword: React.FC = () => {
               <PhoneInput
                 value={phone}
                 onChange={setPhone}
+                disabled={isLoading}
                 className="w-full bg-[#282828] border border-[#3E3E3E] rounded-md px-4 py-3 text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-colors"
               />
             </div>

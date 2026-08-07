@@ -1,5 +1,15 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
+import dynamic from "next/dynamic";
+import persian from "react-date-object/calendars/persian";
+import persian_fa from "react-date-object/locales/persian_fa";
+
+const DatePicker = dynamic(() => import("react-multi-date-picker"), {
+  ssr: false,
+});
 import { Search, Upload, Calendar, IdCard, CheckCircle2 } from "lucide-react";
+import { apiRequest, getApiErrorMessage, unwrapList } from "../../lib/api";
+import { useToast } from "../../contexts/ToastContext";
+import { useImageCropper } from "../../contexts/ImageCropperContext";
 
 interface ExistingArtistTabProps {
   onSubmit: (data: any) => Promise<void>;
@@ -7,103 +17,141 @@ interface ExistingArtistTabProps {
 }
 
 interface Artist {
-  id: string;
+  id: number | string;
   name: string;
-  avatar: string;
-  genres: string[];
+  artistic_name?: string;
+  profile_image: string | null;
   verified: boolean;
+  genres?: string[];
 }
 
 interface FormData {
   selectedArtist: Artist | null;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+  city: string;
   birthDate: string;
   nationalId: string;
   idCardImage: string | null;
+  idCardFile: File | null;
   additionalInfo: string;
 }
 
-// Mock data for existing artists
-const MOCK_ARTISTS: Artist[] = [
-  {
-    id: "1",
-    name: "محسن چاوشی",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=MC",
-    genres: ["سنتی", "پاپ"],
-    verified: true,
-  },
-  {
-    id: "2",
-    name: "حمید هیراد",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=HH",
-    genres: ["پاپ", "راک"],
-    verified: true,
-  },
-  {
-    id: "3",
-    name: "سینا سرلک",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=SS",
-    genres: ["پاپ"],
-    verified: true,
-  },
-  {
-    id: "4",
-    name: "علی یاسینی",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=AY",
-    genres: ["سنتی"],
-    verified: true,
-  },
-  {
-    id: "5",
-    name: "رضا صادقی",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=RS",
-    genres: ["پاپ", "سنتی"],
-    verified: true,
-  },
-  {
-    id: "6",
-    name: "مهدی یراحی",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=MY",
-    genres: ["پاپ"],
-    verified: true,
-  },
-  {
-    id: "7",
-    name: "امیر عباس گلاب",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=AG",
-    genres: ["پاپ", "راک"],
-    verified: true,
-  },
-  {
-    id: "8",
-    name: "علیرضا طلیسچی",
-    avatar: "https://via.placeholder.com/100/1DB954/FFFFFF?text=AT",
-    genres: ["سنتی", "فولکلور"],
-    verified: true,
-  },
+// لیست شهرهای ایران (فارسی)
+const IRAN_CITIES_FA = [
+  "تهران",
+  "مشهد",
+  "اصفهان",
+  "کرج",
+  "تبریز",
+  "شیراز",
+  "قم",
+  "اهواز",
+  "کرمانشاه",
+  "رشت",
+  "کرمان",
+  "ارومیه",
+  "ساری",
+  "زنجان",
+  "سنندج",
+  "یزد",
+  "بندرعباس",
+  "بوشهر",
+  "همدان",
+  "قزوین",
+  "سمنان",
+  "زاهدان",
+  "بیرجند",
+  "گرگان",
+  "بابل",
+  "اراک",
+  "شهرکرد",
+  "خرم‌آباد",
+  "سیرجان",
+  "قائن",
+  "نیشابور",
+  "مراغه",
+  "بجنورد",
+  "یاسوج",
+  "نجف‌آباد",
 ];
+
+// Returns a data-URL SVG placeholder when an artist has no profile image
+const getArtistPlaceholder = (artist: Artist) => {
+  const name = (artist.artistic_name || artist.name || "A").trim();
+  const initials = name
+    .split(/\s+/)
+    .map((s) => s[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  const bg = "#0a0a0a";
+  const accent = "#1DB954";
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='100%' height='100%' fill='${bg}'/><circle cx='200' cy='120' r='72' fill='${accent}' opacity='0.15'/><text x='50%' y='55%' font-size='140' fill='${accent}' font-family='Inter, Roboto, Arial, Helvetica, sans-serif' font-weight='700' dominant-baseline='middle' text-anchor='middle'>${initials}</text><text x='50%' y='78%' font-size='20' fill='#B3B3B3' font-family='Inter, Roboto, Arial, Helvetica, sans-serif' dominant-baseline='middle' text-anchor='middle'>Artist</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
 
 const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
   onSubmit,
   isSubmitting,
 }) => {
+  const { showToast } = useToast();
+  const { cropImage } = useImageCropper();
   const [formData, setFormData] = useState<FormData>({
     selectedArtist: null,
+    firstName: "",
+    lastName: "",
+    phoneNumber: "",
+    city: "",
     birthDate: "",
     nationalId: "",
     idCardImage: null,
+    idCardFile: null,
     additionalInfo: "",
   });
 
+  // Jalali display value while keeping gregorian ISO in formData.birthDate
+  const [jalaliBirth, setJalaliBirth] = useState<string>("");
+
   const [searchQuery, setSearchQuery] = useState("");
+  const [artists, setArtists] = useState<Artist[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>(
-    {}
+    {},
   );
   const idCardInputRef = useRef<HTMLInputElement>(null);
 
-  const filteredArtists = MOCK_ARTISTS.filter((artist) =>
-    artist.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Search Artists with Debounce
+  React.useEffect(() => {
+    const fetchArtists = async () => {
+      if (!searchQuery.trim()) {
+        setArtists([]);
+        return;
+      }
+
+      setIsSearching(true);
+      try {
+        const data = await apiRequest<Artist[] | { results?: Artist[] }>("/artists/", {
+          auth: false,
+          query: { q: searchQuery.trim(), unlinked: true },
+        });
+        setArtists(unwrapList(data));
+      } catch (error) {
+        setArtists([]);
+        showToast(getApiErrorMessage(error, "جست‌وجوی هنرمندان انجام نشد."), "error");
+      } finally {
+        setIsSearching(false);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      fetchArtists();
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, showToast]);
 
   const handleArtistSelect = (artist: Artist) => {
     setFormData((prev) => ({ ...prev, selectedArtist: artist }));
@@ -115,28 +163,68 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
   };
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >,
   ) => {
-    const { name, value } = e.target;
+    const { name } = e.target;
+    let { value } = e.target as HTMLInputElement;
+
+    // Normalize numeric-only fields
+    if (name === "nationalId") {
+      value = value.replace(/\D/g, "").slice(0, 10);
+    }
+    if (name === "phoneNumber") {
+      value = value.replace(/\D/g, "").slice(0, 11);
+    }
+
     setFormData((prev) => ({ ...prev, [name]: value }));
     if (errors[name as keyof FormData]) {
       setErrors((prev) => ({ ...prev, [name]: undefined }));
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setFormData((prev) => ({ ...prev, idCardImage: result }));
-        if (errors.idCardImage) {
-          setErrors((prev) => ({ ...prev, idCardImage: undefined }));
-        }
-      };
-      reader.readAsDataURL(file);
-    }
+  const isFormValid = useMemo(() => {
+    const f = formData;
+    const nationalValid = /^\d{10}$/.test(f.nationalId);
+    const phoneValid = /^09\d{9}$/.test(f.phoneNumber);
+    return (
+      !!f.selectedArtist &&
+      f.firstName.trim().length > 0 &&
+      f.lastName.trim().length > 0 &&
+      phoneValid &&
+      f.city.trim().length > 0 &&
+      f.birthDate &&
+      nationalValid &&
+      !!f.idCardImage
+    );
+  }, [formData]);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const sourceFile = input.files?.[0];
+    input.value = "";
+    if (!sourceFile) return;
+
+    const result = await cropImage(sourceFile, {
+      mode: "free",
+      title: "تنظیم تصویر کارت ملی",
+      description: "کل کارت به‌صورت پیش‌فرض داخل قاب قرار می‌گیرد. فقط حاشیه‌های اضافی را برش دهید و هیچ بخش اطلاعاتی را حذف نکنید.",
+      maxSourceBytes: 25 * 1024 * 1024,
+      maxOutputBytes: 4.8 * 1024 * 1024,
+      maxOutputDimension: 3000,
+      acceptedTypes: ["image/jpeg", "image/png"],
+      outputTypes: ["image/jpeg", "image/png"],
+    });
+    if (!result) return;
+
+    setFormData((prev) => ({ ...prev, idCardFile: result.file }));
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setFormData((prev) => ({ ...prev, idCardImage: reader.result as string }));
+      setErrors((prev) => ({ ...prev, idCardImage: undefined }));
+    };
+    reader.readAsDataURL(result.file);
   };
 
   const validateForm = (): boolean => {
@@ -144,6 +232,14 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
 
     if (!formData.selectedArtist)
       newErrors.selectedArtist = "انتخاب هنرمند الزامی است";
+    if (!formData.firstName.trim()) newErrors.firstName = "نام الزامی است";
+    if (!formData.lastName.trim())
+      newErrors.lastName = "نام خانوادگی الزامی است";
+    if (!formData.phoneNumber.trim())
+      newErrors.phoneNumber = "شماره موبایل الزامی است";
+    else if (!/^09\d{9}$/.test(formData.phoneNumber))
+      newErrors.phoneNumber = "شماره موبایل معتبر نیست";
+    if (!formData.city.trim()) newErrors.city = "شهر الزامی است";
     if (!formData.birthDate) newErrors.birthDate = "تاریخ تولد الزامی است";
     if (!formData.nationalId.trim()) newErrors.nationalId = "کد ملی الزامی است";
     else if (!/^\d{10}$/.test(formData.nationalId))
@@ -158,11 +254,7 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (validateForm()) {
-      await onSubmit({
-        ...formData,
-        artistId: formData.selectedArtist?.id,
-        artistName: formData.selectedArtist?.name,
-      });
+      await onSubmit(formData);
     }
   };
 
@@ -215,21 +307,33 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
             <div className="bg-gradient-to-br from-[#1DB954]/20 to-[#1ed760]/20 border-2 border-[#1DB954] rounded-2xl p-3 md:p-6 mb-4">
               <div className="flex items-center gap-4">
                 <img
-                  src={formData.selectedArtist.avatar}
-                  alt={formData.selectedArtist.name}
-                  className="w-20 h-20 rounded-full border-4 border-[#1DB954]"
+                  src={
+                    formData.selectedArtist.profile_image ||
+                    getArtistPlaceholder(formData.selectedArtist)
+                  }
+                  alt={
+                    formData.selectedArtist.artistic_name ||
+                    formData.selectedArtist.name
+                  }
+                  className="w-20 h-20 rounded-full border-4 border-[#1DB954] object-cover"
                 />
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     <h4 className="text-white font-bold text-xl">
-                      {formData.selectedArtist.name}
+                      {formData.selectedArtist.artistic_name ||
+                        formData.selectedArtist.name}
                     </h4>
                     {formData.selectedArtist.verified && (
                       <CheckCircle2 className="w-6 h-6 text-[#1DB954]" />
                     )}
                   </div>
                   <div className="flex gap-2 flex-wrap">
-                    {formData.selectedArtist.genres.map((genre) => (
+                    {formData.selectedArtist.artistic_name && (
+                      <span className="bg-[#1DB954]/30 text-[#1DB954] px-3 py-1 rounded-full text-sm font-semibold">
+                        {formData.selectedArtist.name}
+                      </span>
+                    )}
+                    {(formData.selectedArtist.genres || []).map((genre) => (
                       <span
                         key={genre}
                         className="bg-[#1DB954]/30 text-[#1DB954] px-3 py-1 rounded-full text-sm font-semibold"
@@ -287,10 +391,15 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
               </p>
             )}
 
-            {showDropdown && searchQuery && (
+            {showDropdown && (searchQuery || isSearching) && (
               <div className="absolute z-10 w-full mt-2 bg-[#181818] border border-[#282828] rounded-2xl shadow-2xl max-h-96 overflow-y-auto custom-scrollbar">
-                {filteredArtists.length > 0 ? (
-                  filteredArtists.map((artist) => (
+                {isSearching ? (
+                  <div className="p-8 text-center">
+                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#1DB954]"></div>
+                    <p className="text-[#B3B3B3] mt-2">در حال جستجو...</p>
+                  </div>
+                ) : artists.length > 0 ? (
+                  artists.map((artist) => (
                     <button
                       key={artist.id}
                       type="button"
@@ -298,21 +407,28 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
                       className="w-full flex items-center gap-4 p-3 md:p-4 hover:bg-[#282828] transition-colors border-b border-[#282828] last:border-b-0"
                     >
                       <img
-                        src={artist.avatar}
-                        alt={artist.name}
-                        className="w-14 h-14 rounded-full"
+                        src={
+                          artist.profile_image || getArtistPlaceholder(artist)
+                        }
+                        alt={artist.artistic_name || artist.name}
+                        className="w-14 h-14 rounded-full object-cover"
                       />
                       <div className="flex-1 text-right">
                         <div className="flex items-center gap-2">
                           <h4 className="text-white font-semibold">
-                            {artist.name}
+                            {artist.artistic_name || artist.name}
                           </h4>
                           {artist.verified && (
                             <CheckCircle2 className="w-5 h-5 text-[#1DB954]" />
                           )}
                         </div>
                         <div className="flex gap-2 mt-1 flex-wrap">
-                          {artist.genres.map((genre) => (
+                          {artist.artistic_name && (
+                            <span className="text-[#B3B3B3] text-xs">
+                              {artist.name}
+                            </span>
+                          )}
+                          {(artist.genres || []).map((genre) => (
                             <span
                               key={genre}
                               className="text-[#B3B3B3] text-xs"
@@ -337,6 +453,152 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
         )}
       </div>
 
+      {/* Personal Information */}
+      <div className="bg-[#121212] rounded-2xl p-3 md:p-6 border border-[#282828]">
+        <h3 className="text-xl font-bold text-white mb-3 md:mb-6 flex items-center gap-2">
+          <div className="w-8 h-8 bg-[#1DB954]/20 rounded-lg flex items-center justify-center">
+            <svg
+              className="w-5 h-5 text-[#1DB954]"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+              />
+            </svg>
+          </div>
+          اطلاعات شخصی
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-5">
+          <div>
+            <label className="block text-sm font-semibold text-[#B3B3B3] mb-1 md:mb-2">
+              نام *
+            </label>
+            <input
+              type="text"
+              name="firstName"
+              value={formData.firstName}
+              onChange={handleChange}
+              className={`w-full bg-[#0a0a0a] border ${
+                errors.firstName ? "border-red-500" : "border-[#282828]"
+              } rounded-xl px-4 py-3 text-white placeholder-[#535353] focus:outline-none focus:border-[#1DB954] transition-colors`}
+              placeholder="نام خود را وارد کنید"
+            />
+            {errors.firstName && (
+              <p className="text-red-500 text-xs mt-1">{errors.firstName}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-[#B3B3B3] mb-1 md:mb-2">
+              نام خانوادگی *
+            </label>
+            <input
+              type="text"
+              name="lastName"
+              value={formData.lastName}
+              onChange={handleChange}
+              className={`w-full bg-[#0a0a0a] border ${
+                errors.lastName ? "border-red-500" : "border-[#282828]"
+              } rounded-xl px-4 py-3 text-white placeholder-[#535353] focus:outline-none focus:border-[#1DB954] transition-colors`}
+              placeholder="نام خانوادگی خود را وارد کنید"
+            />
+            {errors.lastName && (
+              <p className="text-red-500 text-xs mt-1">{errors.lastName}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-[#B3B3B3] mb-1 md:mb-2 flex items-center gap-2">
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
+                />
+              </svg>
+              شماره موبایل *
+            </label>
+            <input
+              type="tel"
+              name="phoneNumber"
+                value={formData.phoneNumber}
+                onChange={handleChange}
+                inputMode="numeric"
+              maxLength={11}
+              className={`w-full bg-[#0a0a0a] border ${
+                errors.phoneNumber ? "border-red-500" : "border-[#282828]"
+              } rounded-xl px-4 py-3 text-white placeholder-[#535353] focus:outline-none focus:border-[#1DB954] transition-colors`}
+              placeholder="09123456789"
+              dir="ltr"
+            />
+            {errors.phoneNumber && (
+              <p className="text-red-500 text-xs mt-1">{errors.phoneNumber}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-[#B3B3B3] mb-1 md:mb-2 flex items-center gap-2">
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+              شهر *
+            </label>
+            <div className="relative">
+              <select
+                name="city"
+                value={formData.city}
+                onChange={handleChange}
+                dir="rtl"
+                className={`appearance-none w-full bg-[#0a0a0a] border ${
+                  errors.city ? "border-red-500" : "border-[#282828]"
+                } rounded-xl px-4 py-3 text-white placeholder-[#535353] focus:outline-none focus:border-[#1DB954] transition-colors`}
+              >
+                <option value="">انتخاب شهر</option>
+                {IRAN_CITIES_FA.map((c) => (
+                  <option key={c} value={c} className="text-right">
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 text-[#535353]">
+                ▼
+              </div>
+            </div>
+            {errors.city && (
+              <p className="text-red-500 text-xs mt-1">{errors.city}</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Verification Information */}
       <div className="bg-[#121212] rounded-2xl p-3 md:p-6 border border-[#282828]">
         <h3 className="text-xl font-bold text-white mb-3 md:mb-6 flex items-center gap-2">
@@ -352,15 +614,37 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
               <Calendar className="w-4 h-4" />
               تاریخ تولد *
             </label>
-            <input
-              type="date"
-              name="birthDate"
-              value={formData.birthDate}
-              onChange={handleChange}
-              className={`w-full bg-[#0a0a0a] border ${
-                errors.birthDate ? "border-red-500" : "border-[#282828]"
-              } rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#1DB954] transition-colors`}
-            />
+            <div>
+              <DatePicker
+                value={jalaliBirth}
+                onChange={(date: any) => {
+                  if (!date) {
+                    setJalaliBirth("");
+                    setFormData((prev) => ({ ...prev, birthDate: "" }));
+                    return;
+                  }
+                  try {
+                    const greg = date.toDate();
+                    const iso = greg.toISOString().split("T")[0];
+                    setFormData((prev) => ({ ...prev, birthDate: iso }));
+                    setJalaliBirth(date.format("YYYY/MM/DD"));
+                    if (errors.birthDate) {
+                      setErrors((prev) => ({ ...prev, birthDate: undefined }));
+                    }
+                  } catch (err) {
+                    console.error("Failed to parse date:", err);
+                  }
+                }}
+                calendar={persian}
+                locale={persian_fa}
+                format="YYYY/MM/DD"
+                className="w-full"
+                inputClass={`w-full bg-[#0a0a0a] border ${
+                  errors.birthDate ? "border-red-500" : "border-[#282828]"
+                } rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#1DB954] transition-colors`}
+                calendarPosition="bottom-right"
+              />
+            </div>
             {errors.birthDate && (
               <p className="text-red-500 text-xs mt-1">{errors.birthDate}</p>
             )}
@@ -377,6 +661,8 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
               value={formData.nationalId}
               onChange={handleChange}
               maxLength={10}
+              inputMode="numeric"
+              pattern="\d*"
               className={`w-full bg-[#0a0a0a] border ${
                 errors.nationalId ? "border-red-500" : "border-[#282828]"
               } rounded-xl px-4 py-3 text-white placeholder-[#535353] focus:outline-none focus:border-[#1DB954] transition-colors`}
@@ -430,7 +716,7 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
             <div className="relative">
               <img
                 src={formData.idCardImage}
-                alt="ID Card"
+                alt="مدرک شناسایی"
                 className="max-h-64 mx-auto rounded-xl"
               />
               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center">
@@ -446,7 +732,7 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
                 تصویر کارت ملی خود را بارگذاری کنید *
               </p>
               <p className="text-[#535353] text-sm">
-                فرمت‌های مجاز: JPG, PNG - حداکثر 5MB
+                فرمت‌های مجاز: JPG یا PNG ـ حداکثر ۵ مگابایت
               </p>
             </div>
           )}
@@ -467,8 +753,8 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
       <div className="flex justify-center pt-2 md:pt-4">
         <button
           type="submit"
-          disabled={isSubmitting}
-          className="bg-gradient-to-r from-[#1DB954] to-[#1ed760] text-white font-bold py-3 px-8 md:py-4 md:px-12 rounded-full hover:shadow-2xl hover:shadow-[#1DB954]/50 transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 text-lg"
+          disabled={isSubmitting || !isFormValid}
+          className="bg-gradient-to-r from-[#1DB954] to-[#1ed760] text-white font-bold py-3 px-8 md:py-4 md:px-12 rounded-full hover:shadow-2xl hover:shadow-[#1DB954]/50 transition-all duration-300 hover:scale-105 disabled:filter disabled:grayscale disabled:brightness-75 disabled:opacity-60 disabled:cursor-not-allowed disabled:scale-100 text-lg"
         >
           {isSubmitting ? (
             <div className="flex items-center gap-3">

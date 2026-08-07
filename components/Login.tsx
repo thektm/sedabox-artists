@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigation } from "../contexts/NavigationContext";
 import PhoneInput from "./PhoneInput";
+import { toPersianMessage } from "../lib/faMessages";
 
 const Login: React.FC = () => {
   const { navigateTo } = useNavigation();
@@ -33,8 +34,15 @@ const Login: React.FC = () => {
       setTimeout(() => {
         navigateTo("home");
       }, 500);
-    } catch (err) {
-      setLocalError(error || "خطا در ورود");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? toPersianMessage(
+              err.message,
+              "شماره تلفن یا رمز عبور اشتباه است. لطفاً دوباره تلاش کنید.",
+            )
+          : "شماره تلفن یا رمز عبور اشتباه است. لطفاً دوباره تلاش کنید.";
+      setLocalError(message);
     }
   };
 
@@ -51,7 +59,7 @@ const Login: React.FC = () => {
         {/* Logo and Header */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-8">
-            <img src="/logo.png" alt="SedaBox" className="h-16 w-auto" />
+            <img src="/logo.png" alt="صداباکس" className="h-16 w-auto" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
             خوش آمدید
@@ -100,7 +108,11 @@ const Login: React.FC = () => {
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-6"
+            autoComplete="off"
+          >
             {/* Phone Input */}
             <div>
               <label className="block text-sm font-medium text-white mb-2">
@@ -128,6 +140,7 @@ const Login: React.FC = () => {
                   placeholder="••••••••"
                   className="w-full px-4 py-3 bg-[#121212] border border-[#282828] rounded-md text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-all duration-200"
                   disabled={isLoading}
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"

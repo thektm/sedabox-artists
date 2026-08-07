@@ -30,6 +30,15 @@ const Sidebar: React.FC = () => {
       id: "albums",
       label: "مدیریت آلبوم‌ها",
       icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM12 8a4 4 0 100 8 4 4 0 000-8zm0 2.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" />
+        </svg>
+      ),
+    },
+    {
+      id: "releases",
+      label: "انتشارها",
+      icon: (
         <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
           <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
         </svg>
@@ -109,7 +118,7 @@ const Sidebar: React.FC = () => {
       {/* Logo */}
       <div className="p-6">
         <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="SedaBox" className="h-10 w-10" />
+          <img src="/logo.png" alt="صداباکس" className="h-10 w-10" />
           <div>
             <h1 className="text-white font-bold text-xl">صدا باکس</h1>
             <p className="text-[#B3B3B3] text-xs">داشبورد هنرمند</p>

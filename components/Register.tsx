@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigation } from "../contexts/NavigationContext";
 import PhoneInput from "./PhoneInput";
+import { toPersianMessage } from "../lib/faMessages";
 import TermsModal from "./TermsModal";
 
 const Register: React.FC = () => {
@@ -42,10 +43,14 @@ const Register: React.FC = () => {
       await register("", phone, password);
       setSuccessMessage("ثبت نام موفق! درحال هدایت به تأیید...");
       setTimeout(() => {
-        navigateTo("verify");
+        navigateTo("verify", { mode: "registration", phone });
       }, 500);
-    } catch (err) {
-      setLocalError(error || "خطا در ثبت نام");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? toPersianMessage(err.message, "ثبت‌نام انجام نشد. لطفاً دوباره تلاش کنید.")
+          : "ثبت‌نام انجام نشد. لطفاً دوباره تلاش کنید.";
+      setLocalError(message);
     }
   };
 
@@ -62,7 +67,7 @@ const Register: React.FC = () => {
         {/* Logo and Header */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-8">
-            <img src="/logo.png" alt="SedaBox" className="h-16 w-auto" />
+            <img src="/logo.png" alt="صداباکس" className="h-16 w-auto" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
             شروع کنید
@@ -111,7 +116,11 @@ const Register: React.FC = () => {
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4"
+            autoComplete="off"
+          >
             {/* Phone Input */}
             <div>
               <label className="block text-sm font-medium text-white mb-2">
@@ -139,6 +148,7 @@ const Register: React.FC = () => {
                   placeholder="••••••••"
                   className="w-full px-4 py-3 bg-[#121212] border border-[#282828] rounded-md text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-all duration-200"
                   disabled={isLoading}
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"

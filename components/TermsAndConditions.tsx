@@ -73,7 +73,7 @@ const TermsAndConditions: React.FC = () => {
                       انتشار
                     </span>
                     <span className="px-3 py-1 bg-[#282828] rounded-full text-xs text-white">
-                      پخش آنلاین (Streaming)
+                      پخش آنلاین
                     </span>
                     <span className="px-3 py-1 bg-[#282828] rounded-full text-xs text-white">
                       نمایش اطلاعات اثر و هنرمند
@@ -117,7 +117,7 @@ const TermsAndConditions: React.FC = () => {
               </h3>
               <ul className="space-y-3 pr-8 list-disc">
                 <li>
-                  سهم درآمد شما از پخش آنلاین (Streaming) آثار مطابق با مدل
+                  سهم درآمد شما از پخش آنلاین آثار مطابق با مدل
                   درآمدی اعلام شده در پلتفرم محاسبه می‌شود.
                 </li>
                 <li>

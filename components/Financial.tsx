@@ -1,1095 +1,618 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowDownToLine,
+  BarChart3,
+  CheckCircle2,
+  Clock3,
+  Coins,
+  CreditCard,
+  RefreshCw,
+  RotateCcw,
+  WalletCards,
+  XCircle,
+} from "lucide-react";
+import { apiRequest, getApiErrorMessage } from "../lib/api";
+import type { PaginatedResponse } from "../lib/api";
+import { useToast } from "../contexts/ToastContext";
+import PremiumTimelineChart, { ChartView, ChartViewToggle } from "./PremiumTimelineChart";
 
-// Financial Data Interfaces
-interface StreamingRecord {
+type Range = "7d" | "30d" | "monthly" | "all";
+type View = "overview" | "streams" | "withdrawals";
+type PayoutStatus = "pending" | "approved" | "rejected" | "done";
+
+interface FinanceResponse {
+  summary: {
+    income_change_pct: number | null;
+    income_amount: string | number;
+    currency: string;
+    plays_count: number;
+    paid_plays: number;
+    zero_value_plays: number;
+    average_revenue_per_play: string | number;
+    free_income: string | number;
+    premium_income: string | number;
+    free_plays: number;
+    premium_plays: number;
+    current_free_play_rate: string | number;
+    current_premium_play_rate: string | number;
+    period: string;
+  };
+  chart: Array<{
+    time?: string;
+    label?: string;
+    income: string | number;
+    free_income?: string | number;
+    premium_income?: string | number;
+    plays: number;
+  }>;
+}
+
+interface WalletResponse {
+  total_credit: string | number;
+  requested_credit: string | number;
+  available_credit: string | number;
+  withdrawable_credit: string | number;
+  withdrawn_credit: string | number;
+  pending_credit: string | number;
+  minimum_payout_amount?: string | number;
+  amount_needed_for_payout?: string | number;
+  meets_minimum_payout?: boolean;
+  can_request_payout?: boolean;
+  paid_plays: number;
+  zero_value_plays: number;
+  has_active_request: boolean;
+  deposit_requests: { total_submissions: number; pending: number; approved: number; rejected: number; done: number };
+}
+
+interface PayoutRequest {
   id: number;
-  songTitle: string;
-  plays: number;
-  revenuePerPlay: number;
-  totalRevenue: number;
-  date: string;
+  amount: string | number;
+  status: PayoutStatus;
+  transaction_id?: string | null;
+  submission_date: string;
+  status_change_date?: string | null;
+  summary?: {
+    total_plays?: number;
+    free_plays?: number;
+    premium_plays?: number;
+    free_percentage?: number;
+    premium_percentage?: number;
+  };
 }
 
-interface WithdrawalAttempt {
+interface FinanceSong {
   id: number;
-  amount: number;
-  requestDate: string;
-  status: "pending" | "completed" | "rejected";
-  completedDate?: string;
-  bankAccount: string;
+  title: string;
+  title_en?: string;
+  cover_image?: string;
+  release_date?: string | null;
+  total_plays: number;
+  tracked_plays: number;
+  paid_plays: number;
+  zero_value_plays: number;
+  income: string | number;
+  total_income: string | number;
+  deposited_income: string | number;
+  pending_income: string | number;
+  remaining_income: string | number;
+  available_income: string | number;
+  average_revenue_per_play: string | number;
+  status: string;
 }
 
-interface FinancialSummary {
-  totalLifetimeEarnings: number; // Total earned from beginning
-  totalWithdrawn: number; // Total amount withdrawn successfully
-  totalPendingWithdrawals: number; // Amount in pending withdrawals
-  availableBalance: number; // Available to withdraw now
-  totalWithdrawalAttempts: number; // Number of withdrawal requests
-  successfulWithdrawals: number;
-  pendingWithdrawals: number;
-  rejectedWithdrawals: number;
-}
+const rangeOptions: Array<{ value: Range; label: string }> = [
+  { value: "7d", label: "۷ روز" },
+  { value: "30d", label: "۳۰ روز" },
+  { value: "monthly", label: "۱۲ ماه" },
+  { value: "all", label: "همه" },
+];
 
-interface MonthlyRevenue {
-  month: string;
-  totalPlays: number;
-  totalRevenue: number;
-  averageRevenuePerPlay: number;
-}
+const num = (value: string | number | null | undefined) => Number(value || 0);
+const money = (value: string | number | null | undefined) =>
+  `${new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 8 }).format(num(value))} تومان`;
+const compact = (value: number) =>
+  new Intl.NumberFormat("fa-IR", { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
+const compactMoney = (value: number) =>
+  new Intl.NumberFormat("fa-IR", { notation: "compact", maximumFractionDigits: 2 }).format(value || 0);
+const dateLabel = (value?: string | null) => {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeStyle: "short" }).format(date);
+};
+const chartDateLabel = (value: string, monthly: boolean) => {
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(
+    "fa-IR",
+    monthly ? { month: "short", year: "2-digit" } : { month: "numeric", day: "numeric" },
+  ).format(date);
+};
+
+const statusMeta: Record<PayoutStatus, { label: string; className: string; icon: React.ElementType }> = {
+  pending: { label: "در انتظار", className: "text-amber-300 bg-amber-500/10 border-amber-500/25", icon: Clock3 },
+  approved: { label: "تأیید شده", className: "text-blue-300 bg-blue-500/10 border-blue-500/25", icon: CheckCircle2 },
+  rejected: { label: "رد شده", className: "text-red-300 bg-red-500/10 border-red-500/25", icon: XCircle },
+  done: { label: "پرداخت شده", className: "text-[#1DB954] bg-[#1DB954]/10 border-[#1DB954]/25", icon: CheckCircle2 },
+};
+
+const unpackSongPage = (response: FinanceSong[] | PaginatedResponse<FinanceSong>) =>
+  Array.isArray(response)
+    ? { count: response.length, next: null as string | null, results: response }
+    : { count: response.count, next: response.next, results: response.results || [] };
 
 const Financial: React.FC = () => {
-  const [timeRange, setTimeRange] = useState<
-    "week" | "month" | "year" | "lifetime"
-  >("month");
-  const [selectedView, setSelectedView] = useState<
-    "overview" | "streams" | "withdrawals"
-  >("overview");
+  const { showToast } = useToast();
+  const [timeRange, setTimeRange] = useState<Range>("30d");
+  const [selectedView, setSelectedView] = useState<View>("overview");
+  const [chartView, setChartView] = useState<ChartView>("timeline");
+  const [finance, setFinance] = useState<FinanceResponse | null>(null);
+  const [wallet, setWallet] = useState<WalletResponse | null>(null);
+  const [payouts, setPayouts] = useState<PayoutRequest[]>([]);
+  const [songs, setSongs] = useState<FinanceSong[]>([]);
+  const [songsCount, setSongsCount] = useState(0);
+  const [songsNext, setSongsNext] = useState<string | null>(null);
+  const [songsLoadingMore, setSongsLoadingMore] = useState(false);
+  const [songsError, setSongsError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [financeLoading, setFinanceLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const loadedOnce = useRef(false);
+  const loadedFinanceRange = useRef<Range | null>(null);
+  const financeRequest = useRef(0);
+  const songsRequest = useRef(0);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
-  // Revenue per play (in Tomans) - This would come from backend/settings
-  const REVENUE_PER_PLAY = 50; // 50 Tomans per play
-
-  // Mock Data - In production, this comes from API
-  const streamingRecords: StreamingRecord[] = [
-    {
-      id: 1,
-      songTitle: "ترانه عشق",
-      plays: 45600,
-      revenuePerPlay: REVENUE_PER_PLAY,
-      totalRevenue: 2280000,
-      date: "1403/09/19",
-    },
-    {
-      id: 2,
-      songTitle: "بی‌تو",
-      plays: 32400,
-      revenuePerPlay: REVENUE_PER_PLAY,
-      totalRevenue: 1620000,
-      date: "1403/09/18",
-    },
-    {
-      id: 3,
-      songTitle: "آهنگ جدید",
-      plays: 28900,
-      revenuePerPlay: REVENUE_PER_PLAY,
-      totalRevenue: 1445000,
-      date: "1403/09/17",
-    },
-    {
-      id: 4,
-      songTitle: "ترانه عشق",
-      plays: 21300,
-      revenuePerPlay: REVENUE_PER_PLAY,
-      totalRevenue: 1065000,
-      date: "1403/09/16",
-    },
-    {
-      id: 5,
-      songTitle: "شب بارانی",
-      plays: 19800,
-      revenuePerPlay: REVENUE_PER_PLAY,
-      totalRevenue: 990000,
-      date: "1403/09/15",
-    },
-    {
-      id: 6,
-      songTitle: "بی‌تو",
-      plays: 18200,
-      revenuePerPlay: REVENUE_PER_PLAY,
-      totalRevenue: 910000,
-      date: "1403/09/14",
-    },
-  ];
-
-  const withdrawalHistory: WithdrawalAttempt[] = [
-    {
-      id: 1,
-      amount: 5000000,
-      requestDate: "1403/09/01",
-      status: "completed",
-      completedDate: "1403/09/03",
-      bankAccount: "****1234",
-    },
-    {
-      id: 2,
-      amount: 3000000,
-      requestDate: "1403/08/15",
-      status: "completed",
-      completedDate: "1403/08/17",
-      bankAccount: "****1234",
-    },
-    {
-      id: 3,
-      amount: 2000000,
-      requestDate: "1403/09/15",
-      status: "pending",
-      bankAccount: "****1234",
-    },
-    {
-      id: 4,
-      amount: 1500000,
-      requestDate: "1403/07/20",
-      status: "completed",
-      completedDate: "1403/07/22",
-      bankAccount: "****1234",
-    },
-    {
-      id: 5,
-      amount: 500000,
-      requestDate: "1403/07/05",
-      status: "rejected",
-      bankAccount: "****1234",
-    },
-  ];
-
-  // Calculate Financial Summary
-  const calculateFinancialSummary = (): FinancialSummary => {
-    const totalLifetimeEarnings = 42180000; // Sum of all streaming revenue from beginning
-    const totalWithdrawn = withdrawalHistory
-      .filter((w) => w.status === "completed")
-      .reduce((sum, w) => sum + w.amount, 0);
-    const totalPendingWithdrawals = withdrawalHistory
-      .filter((w) => w.status === "pending")
-      .reduce((sum, w) => sum + w.amount, 0);
-
-    return {
-      totalLifetimeEarnings,
-      totalWithdrawn,
-      totalPendingWithdrawals,
-      availableBalance:
-        totalLifetimeEarnings - totalWithdrawn - totalPendingWithdrawals,
-      totalWithdrawalAttempts: withdrawalHistory.length,
-      successfulWithdrawals: withdrawalHistory.filter(
-        (w) => w.status === "completed"
-      ).length,
-      pendingWithdrawals: withdrawalHistory.filter(
-        (w) => w.status === "pending"
-      ).length,
-      rejectedWithdrawals: withdrawalHistory.filter(
-        (w) => w.status === "rejected"
-      ).length,
-    };
-  };
-
-  const monthlyData: MonthlyRevenue[] = [
-    {
-      month: "فروردین",
-      totalPlays: 95000,
-      totalRevenue: 4750000,
-      averageRevenuePerPlay: 50,
-    },
-    {
-      month: "اردیبهشت",
-      totalPlays: 87000,
-      totalRevenue: 4350000,
-      averageRevenuePerPlay: 50,
-    },
-    {
-      month: "خرداد",
-      totalPlays: 102000,
-      totalRevenue: 5100000,
-      averageRevenuePerPlay: 50,
-    },
-    {
-      month: "تیر",
-      totalPlays: 118000,
-      totalRevenue: 5900000,
-      averageRevenuePerPlay: 50,
-    },
-    {
-      month: "مرداد",
-      totalPlays: 107000,
-      totalRevenue: 5350000,
-      averageRevenuePerPlay: 50,
-    },
-    {
-      month: "شهریور",
-      totalPlays: 146300,
-      totalRevenue: 7315000,
-      averageRevenuePerPlay: 50,
-    },
-  ];
-
-  const financialSummary = calculateFinancialSummary();
-  const maxAmount = Math.max(...monthlyData.map((d) => d.totalRevenue));
-
-  // Calculate period-specific data
-  const getPeriodData = () => {
-    const now = new Date();
-    let filteredData = streamingRecords;
-
-    // In production, filter by actual dates
-    if (timeRange === "week") {
-      filteredData = streamingRecords.slice(0, 7);
-    } else if (timeRange === "month") {
-      filteredData = streamingRecords.slice(0, 30);
-    } else if (timeRange === "year") {
-      filteredData = streamingRecords;
+  const loadAll = useCallback(async (range: Range, quiet = false) => {
+    const songSequence = ++songsRequest.current;
+    quiet ? setRefreshing(true) : setLoading(true);
+    setSongsLoadingMore(false);
+    setError("");
+    setSongsError("");
+    try {
+      const [financeData, walletData, payoutData, songPageData] = await Promise.all([
+        apiRequest<FinanceResponse>("/artist/finance/", { query: { period: range } }),
+        apiRequest<WalletResponse>("/artist/wallet/"),
+        apiRequest<PayoutRequest[]>("/artist/deposit-request/"),
+        apiRequest<FinanceSong[] | PaginatedResponse<FinanceSong>>("/artist/finance/songs/", {
+          query: { sort: "available", page_size: 20 },
+        }),
+      ]);
+      const songPage = unpackSongPage(songPageData);
+      setFinance(financeData);
+      loadedFinanceRange.current = range;
+      setWallet(walletData);
+      setPayouts(payoutData);
+      if (songSequence === songsRequest.current) {
+        setSongs(songPage.results);
+        setSongsCount(songPage.count);
+        setSongsNext(songPage.next);
+      }
+      loadedOnce.current = true;
+      if (quiet) showToast("اطلاعات مالی با موفقیت به‌روزرسانی شد.", "success");
+    } catch (err) {
+      const message = getApiErrorMessage(err, "دریافت اطلاعات مالی انجام نشد.");
+      setError(message);
+      showToast(message, "error");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
+  }, [showToast]);
 
-    const totalPlays = filteredData.reduce((sum, r) => sum + r.plays, 0);
-    const totalRevenue = filteredData.reduce(
-      (sum, r) => sum + r.totalRevenue,
-      0
+  const loadFinanceRange = useCallback(async (range: Range) => {
+    const sequence = ++financeRequest.current;
+    setFinanceLoading(true);
+    try {
+      const response = await apiRequest<FinanceResponse>("/artist/finance/", { query: { period: range } });
+      if (sequence === financeRequest.current) {
+        setFinance(response);
+        loadedFinanceRange.current = range;
+      }
+    } catch (err) {
+      if (sequence === financeRequest.current) {
+        showToast(getApiErrorMessage(err, "دریافت اطلاعات بازه مالی انتخاب‌شده انجام نشد."), "error");
+      }
+    } finally {
+      if (sequence === financeRequest.current) setFinanceLoading(false);
+    }
+  }, [showToast]);
+
+  const loadMoreSongs = useCallback(async () => {
+    if (!songsNext || songsLoadingMore) return;
+    const sequence = ++songsRequest.current;
+    setSongsLoadingMore(true);
+    setSongsError("");
+    try {
+      const response = await apiRequest<FinanceSong[] | PaginatedResponse<FinanceSong>>(songsNext);
+      if (sequence !== songsRequest.current) return;
+      const page = unpackSongPage(response);
+      setSongs((current) => {
+        const byId = new Map(current.map((song) => [song.id, song]));
+        page.results.forEach((song) => byId.set(song.id, song));
+        return [...byId.values()];
+      });
+      setSongsCount(page.count);
+      setSongsNext(page.next);
+    } catch (err) {
+      if (sequence !== songsRequest.current) return;
+      const message = getApiErrorMessage(err, "دریافت ادامه فهرست آهنگ‌ها انجام نشد.");
+      setSongsError(message);
+      showToast(message, "error");
+    } finally {
+      if (sequence === songsRequest.current) setSongsLoadingMore(false);
+    }
+  }, [showToast, songsLoadingMore, songsNext]);
+
+  useEffect(() => { void loadAll("30d"); }, [loadAll]);
+  useEffect(() => {
+    if (!loading && loadedOnce.current && loadedFinanceRange.current !== timeRange) {
+      void loadFinanceRange(timeRange);
+    }
+  }, [loadFinanceRange, loading, timeRange]);
+
+  useEffect(() => {
+    if (selectedView !== "streams" || !songsNext || songsLoadingMore || !loadMoreRef.current) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMoreSongs();
+      },
+      { rootMargin: "500px 0px" },
     );
-    const previousRevenue =
-      timeRange === "month"
-        ? 5350000
-        : timeRange === "week"
-        ? 890000
-        : 32500000;
-    const growth = (
-      ((totalRevenue - previousRevenue) / previousRevenue) *
-      100
-    ).toFixed(1);
+    observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [loadMoreSongs, selectedView, songsLoadingMore, songsNext]);
 
-    return {
-      totalPlays,
-      totalRevenue,
-      growth: growth.startsWith("-") ? growth : `+${growth}`,
-      averageRevenuePerPlay: REVENUE_PER_PLAY,
-    };
+  const requestPayout = async () => {
+    if (!wallet) return;
+    if (wallet.has_active_request) {
+      showToast("یک درخواست تسویه فعال دارید و تا تعیین تکلیف آن نمی‌توانید درخواست جدیدی ثبت کنید.", "error");
+      return;
+    }
+    const minimumPayout = Math.max(0.01, num(wallet.minimum_payout_amount));
+    const withdrawable = num(wallet.withdrawable_credit);
+    if (withdrawable < minimumPayout) {
+      const needed = Math.max(0, num(wallet.amount_needed_for_payout) || minimumPayout - withdrawable);
+      showToast(`حداقل مبلغ تسویه ${money(minimumPayout)} است. ${money(needed)} دیگر نیاز دارید.`, "error");
+      return;
+    }
+    setRequesting(true);
+    try {
+      await apiRequest<PayoutRequest>("/artist/deposit-request/", { method: "POST" });
+      showToast("درخواست تسویه با موفقیت ثبت شد.", "success");
+      await loadAll(timeRange, true);
+      setSelectedView("withdrawals");
+    } catch (err) {
+      showToast(getApiErrorMessage(err, "ثبت درخواست تسویه انجام نشد."), "error");
+    } finally {
+      setRequesting(false);
+    }
   };
 
-  const currentPeriodData = getPeriodData();
+  const cancelPayout = async (id: number) => {
+    setCancellingId(id);
+    try {
+      await apiRequest(`/artist/deposit-request/${id}/`, { method: "DELETE" });
+      showToast("درخواست تسویه با موفقیت لغو شد.", "success");
+      await loadAll(timeRange, true);
+    } catch (err) {
+      showToast(getApiErrorMessage(err, "لغو درخواست تسویه انجام نشد."), "error");
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const maxChart = useMemo(() => {
+    const values = finance?.chart.map((item) => num(item.income)).filter((value) => value > 0) || [];
+    return values.length ? Math.max(...values) : 0;
+  }, [finance]);
+  const totalPlanPlays = (finance?.summary.free_plays || 0) + (finance?.summary.premium_plays || 0);
+  const premiumPercent = totalPlanPlays ? Math.round(((finance?.summary.premium_plays || 0) / totalPlanPlays) * 100) : 0;
+  const freePercent = totalPlanPlays ? 100 - premiumPercent : 0;
+  const totalSongIncome = num(wallet?.total_credit);
+  const totalSongDeposited = num(wallet?.withdrawn_credit);
+  const totalSongRemaining = Math.max(0, totalSongIncome - totalSongDeposited);
+  const minimumPayout = Math.max(0.01, num(wallet?.minimum_payout_amount));
+  const withdrawableBalance = num(wallet?.withdrawable_credit);
+  const amountNeededForPayout = Math.max(
+    0,
+    num(wallet?.amount_needed_for_payout) || minimumPayout - withdrawableBalance,
+  );
+  const meetsMinimumPayout = wallet?.meets_minimum_payout ?? withdrawableBalance >= minimumPayout;
+  const canRequestPayout = wallet?.can_request_payout ?? (meetsMinimumPayout && !wallet?.has_active_request);
 
   return (
     <div className="min-h-full w-full p-4 sm:p-6 lg:p-8 pc-compact" dir="rtl">
-      {/* Header */}
-      <div className="mb-6 sm:mb-8">
-        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-2">
-          گزارش مالی
-        </h1>
-        <p className="text-[#B3B3B3]">مدیریت و پیگیری درآمد از پخش موزیک</p>
-      </div>
-
-      {/* Lifetime Summary Cards - Always Visible */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {/* Total Lifetime Earnings */}
-        <div className="bg-gradient-to-br from-[#1DB954]/10 to-[#1ed760]/5 border border-[#1DB954]/30 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <svg
-              className="w-5 h-5 text-[#1DB954]"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z" />
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <p className="text-[#B3B3B3] text-xs font-semibold">
-              کل درآمد از ابتدا
-            </p>
-          </div>
-          <p className="text-white text-2xl font-bold mb-1">
-            {financialSummary.totalLifetimeEarnings.toLocaleString()}
-          </p>
-          <p className="text-[#1DB954] text-xs">تومان</p>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="mb-2 text-3xl font-black text-white lg:text-4xl">گزارش مالی</h1>
+          <p className="text-[#B3B3B3]">درآمد، استریم‌ها و درخواست‌های تسویه واقعی</p>
         </div>
-
-        {/* Total Withdrawn */}
-        <div className="bg-[#181818] border border-[#282828] rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <svg
-              className="w-5 h-5 text-[#3b82f6]"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path
-                fillRule="evenodd"
-                d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <p className="text-[#B3B3B3] text-xs font-semibold">
-              مجموع برداشت شده
-            </p>
-          </div>
-          <p className="text-white text-2xl font-bold mb-1">
-            {financialSummary.totalWithdrawn.toLocaleString()}
-          </p>
-          <p className="text-[#B3B3B3] text-xs">
-            {financialSummary.successfulWithdrawals} برداشت موفق
-          </p>
-        </div>
-
-        {/* Available Balance */}
-        <div className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/30 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <svg
-              className="w-5 h-5 text-emerald-500"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <p className="text-[#B3B3B3] text-xs font-semibold">
-              موجودی قابل برداشت
-            </p>
-          </div>
-          <p className="text-white text-2xl font-bold mb-1">
-            {financialSummary.availableBalance.toLocaleString()}
-          </p>
-          <p className="text-emerald-500 text-xs">آماده برداشت</p>
-        </div>
-
-        {/* Withdrawal Attempts */}
-        <div className="bg-[#181818] border border-[#282828] rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <svg
-              className="w-5 h-5 text-[#8b5cf6]"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-              <path
-                fillRule="evenodd"
-                d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm9.707 5.707a1 1 0 00-1.414-1.414L9 12.586l-1.293-1.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <p className="text-[#B3B3B3] text-xs font-semibold">
-              تلاش‌های برداشت
-            </p>
-          </div>
-          <p className="text-white text-2xl font-bold mb-1">
-            {financialSummary.totalWithdrawalAttempts}
-          </p>
-          <p className="text-[#B3B3B3] text-xs">
-            {financialSummary.pendingWithdrawals} در انتظار •{" "}
-            {financialSummary.rejectedWithdrawals} رد شده
-          </p>
-        </div>
-      </div>
-
-      {/* View Tabs */}
-      <div className="flex items-center gap-1 sm:gap-2 mb-4 sm:mb-6 border-b border-[#282828] overflow-x-auto">
         <button
-          onClick={() => setSelectedView("overview")}
-          className={`px-3 sm:px-4 py-2 sm:py-3 font-semibold text-sm transition-all duration-200 border-b-2 whitespace-nowrap ${
-            selectedView === "overview"
-              ? "border-[#1DB954] text-[#1DB954]"
-              : "border-transparent text-[#B3B3B3] hover:text-white"
-          }`}
+          onClick={() => void loadAll(timeRange, true)}
+          disabled={loading || refreshing}
+          className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-[#383838] bg-[#181818] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#252525] disabled:opacity-50"
         >
-          نمای کلی
-        </button>
-        <button
-          onClick={() => setSelectedView("streams")}
-          className={`px-3 sm:px-4 py-2 sm:py-3 font-semibold text-sm transition-all duration-200 border-b-2 whitespace-nowrap ${
-            selectedView === "streams"
-              ? "border-[#1DB954] text-[#1DB954]"
-              : "border-transparent text-[#B3B3B3] hover:text-white"
-          }`}
-        >
-          تاریخچه پخش
-        </button>
-        <button
-          onClick={() => setSelectedView("withdrawals")}
-          className={`px-3 sm:px-4 py-2 sm:py-3 font-semibold text-sm transition-all duration-200 border-b-2 whitespace-nowrap ${
-            selectedView === "withdrawals"
-              ? "border-[#1DB954] text-[#1DB954]"
-              : "border-transparent text-[#B3B3B3] hover:text-white"
-          }`}
-        >
-          برداشت‌ها
+          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />تازه‌سازی
         </button>
       </div>
 
-      {/* Time Range Selector - Only for Overview and Streams */}
-      {selectedView !== "withdrawals" && (
-        <div className="flex items-center gap-1 sm:gap-2 mb-4 sm:mb-6 overflow-x-auto">
+      <div className="mb-7 flex gap-2 overflow-x-auto pb-1">
+        {([
+          { id: "overview", label: "نمای کلی" },
+          { id: "streams", label: "درآمد آهنگ‌ها" },
+          { id: "withdrawals", label: "تسویه‌ها" },
+        ] as Array<{ id: View; label: string }>).map((tab) => (
           <button
-            onClick={() => setTimeRange("week")}
-            className={`px-3 sm:px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap ${
-              timeRange === "week"
-                ? "bg-[#1DB954] text-black"
-                : "bg-[#282828] text-[#B3B3B3] hover:text-white"
-            }`}
+            key={tab.id}
+            onClick={() => setSelectedView(tab.id)}
+            className={`shrink-0 rounded-full px-5 py-2.5 text-sm font-bold transition ${selectedView === tab.id ? "bg-white text-black" : "bg-[#181818] text-[#aaa] hover:bg-[#282828] hover:text-white"}`}
           >
-            هفتگی
+            {tab.label}
           </button>
-          <button
-            onClick={() => setTimeRange("month")}
-            className={`px-3 sm:px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap ${
-              timeRange === "month"
-                ? "bg-[#1DB954] text-black"
-                : "bg-[#282828] text-[#B3B3B3] hover:text-white"
-            }`}
-          >
-            ماهانه
-          </button>
-          <button
-            onClick={() => setTimeRange("year")}
-            className={`px-3 sm:px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap ${
-              timeRange === "year"
-                ? "bg-[#1DB954] text-black"
-                : "bg-[#282828] text-[#B3B3B3] hover:text-white"
-            }`}
-          >
-            سالانه
-          </button>
-          <button
-            onClick={() => setTimeRange("lifetime")}
-            className={`px-3 sm:px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap ${
-              timeRange === "lifetime"
-                ? "bg-[#1DB954] text-black"
-                : "bg-[#282828] text-[#B3B3B3] hover:text-white"
-            }`}
-          >
-            کل دوره
-          </button>
-        </div>
-      )}
+        ))}
+      </div>
 
-      {/* Overview Tab */}
-      {selectedView === "overview" && (
+      {loading ? (
+        <div className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-36 animate-pulse rounded-2xl bg-[#181818]" />)}
+          </div>
+          <div className="h-80 animate-pulse rounded-2xl bg-[#181818]" />
+        </div>
+      ) : error && !finance ? (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-8 text-center">
+          <p className="mb-4 text-red-200">دریافت اطلاعات مالی با خطا مواجه شد.</p>
+          <button onClick={() => void loadAll(timeRange)} className="rounded-xl bg-white px-5 py-2.5 font-bold text-black">تلاش دوباره</button>
+        </div>
+      ) : finance && wallet ? (
         <>
-          {/* Period Revenue Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-            {/* Period Total Revenue */}
-            <div className="bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1DB954]/20 rounded-xl flex items-center justify-center">
-                  <svg
-                    className="w-5 h-5 sm:w-6 sm:h-6 text-[#1DB954]"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
+          {selectedView === "overview" && (
+            <>
+              {finance.summary.zero_value_plays > 0 && (
+                <div className="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-100">
+                  {compact(finance.summary.zero_value_plays)} پخش در دیتابیس با مبلغ صفر ثبت شده است. سوابق قدیمی بدون نرخ تاریخی قابل بازسازی خودکار نیستند.
                 </div>
-                <div>
-                  <p className="text-[#B3B3B3] text-sm">درآمد دوره</p>
-                  <span
-                    className={`text-xs font-semibold ${
-                      currentPeriodData.growth.startsWith("+")
-                        ? "text-[#1DB954]"
-                        : "text-red-500"
-                    }`}
-                  >
-                    {currentPeriodData.growth}%
-                  </span>
-                </div>
-              </div>
-              <p className="text-white text-2xl sm:text-3xl font-bold">
-                {currentPeriodData.totalRevenue.toLocaleString()}
-              </p>
-              <p className="text-[#B3B3B3] text-sm mt-1">تومان</p>
-            </div>
-
-            {/* Total Plays */}
-            <div className="bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#3b82f6]/20 rounded-xl flex items-center justify-center">
-                  <svg
-                    className="w-5 h-5 sm:w-6 sm:h-6 text-[#3b82f6]"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-[#B3B3B3] text-sm">تعداد پخش</p>
-                </div>
-              </div>
-              <p className="text-white text-2xl sm:text-3xl font-bold">
-                {currentPeriodData.totalPlays.toLocaleString()}
-              </p>
-              <p className="text-[#B3B3B3] text-sm mt-1">پخش</p>
-            </div>
-
-            {/* Revenue Per Play */}
-            <div className="bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6 sm:col-span-2 lg:col-span-1">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#8b5cf6]/20 rounded-xl flex items-center justify-center">
-                  <svg
-                    className="w-5 h-5 sm:w-6 sm:h-6 text-[#8b5cf6]"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-[#B3B3B3] text-sm">درآمد هر پخش</p>
-                </div>
-              </div>
-              <p className="text-white text-2xl sm:text-3xl font-bold">
-                {currentPeriodData.averageRevenuePerPlay.toLocaleString()}
-              </p>
-              <p className="text-[#B3B3B3] text-sm mt-1">تومان</p>
-            </div>
-          </div>
-
-          {/* Chart and Balance */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-            {/* Monthly Revenue Chart */}
-            <div className="xl:col-span-2 bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6">
-              <div className="flex items-center justify-between mb-4 sm:mb-6">
-                <div>
-                  <h3 className="text-lg sm:text-xl font-bold text-white mb-1">
-                    روند درآمد ماهانه
-                  </h3>
-                  <p className="text-[#B3B3B3] text-sm">6 ماه اخیر</p>
-                </div>
-              </div>
-
-              {/* Mobile Chart - Simplified */}
-              <div className="block xl:hidden">
-                <div className="space-y-3">
-                  {monthlyData.map((item, index) => (
-                    <div key={index} className="flex items-center gap-3">
-                      <div className="w-16 text-sm text-[#B3B3B3] flex-shrink-0">
-                        {item.month}
-                      </div>
-                      <div className="flex-1 bg-[#282828] rounded-full h-6 relative">
-                        <div
-                          className="bg-gradient-to-r from-[#1DB954] to-[#1ed760] h-6 rounded-full flex items-center justify-end pr-2"
-                          style={{
-                            width: `${(item.totalRevenue / maxAmount) * 100}%`,
-                          }}
-                        >
-                          <span className="text-xs text-black font-bold">
-                            {(item.totalRevenue / 1000000).toFixed(1)}M
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-sm text-[#B3B3B3] w-16 text-left flex-shrink-0">
-                        {item.totalPlays.toLocaleString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Desktop Chart */}
-              <div className="hidden xl:flex xl:items-end xl:justify-between xl:gap-3 xl:h-64">
-                {monthlyData.map((item, index) => (
-                  <div
-                    key={index}
-                    className="flex-1 flex flex-col items-center gap-2"
-                  >
-                    <div className="w-full flex items-end justify-center h-56">
-                      <div
-                        className="w-full bg-gradient-to-t from-[#1DB954] to-[#1ed760] rounded-t-lg hover:opacity-80 transition-opacity cursor-pointer relative group"
-                        style={{
-                          height: `${(item.totalRevenue / maxAmount) * 100}%`,
-                        }}
-                      >
-                        <div className="absolute -top-16 left-1/2 -translate-x-1/2 bg-[#282828] px-3 py-2 rounded-lg text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
-                          <div className="font-bold text-[#1DB954]">
-                            {(item.totalRevenue / 1000000).toFixed(1)}M تومان
-                          </div>
-                          <div className="text-[#B3B3B3] text-xs mt-1">
-                            {item.totalPlays.toLocaleString()} پخش
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <span className="text-[#B3B3B3] text-xs">{item.month}</span>
+              )}
+              <div className="mb-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  { label: "کل درآمد", value: money(wallet.total_credit), icon: Coins, color: "text-[#1DB954] bg-[#1DB954]/15" },
+                  { label: "موجودی قابل تسویه", value: money(wallet.available_credit), icon: WalletCards, color: "text-blue-400 bg-blue-500/15" },
+                  { label: "در انتظار پرداخت", value: money(wallet.pending_credit), icon: Clock3, color: "text-amber-400 bg-amber-500/15" },
+                  { label: "پرداخت‌شده", value: money(wallet.withdrawn_credit), icon: CheckCircle2, color: "text-violet-400 bg-violet-500/15" },
+                ].map(({ label, value, icon: Icon, color }) => (
+                  <div key={label} className="rounded-2xl border border-[#282828] bg-[#181818] p-5">
+                    <div className={`mb-4 flex h-11 w-11 items-center justify-center rounded-xl ${color}`}><Icon className="h-5 w-5" /></div>
+                    <p className="mb-1 text-sm text-[#999]">{label}</p>
+                    <p className="truncate text-xl font-black text-white" title={value}>{value}</p>
                   </div>
                 ))}
               </div>
-            </div>
 
-            {/* Balance & Withdrawal Card */}
-            <div className="bg-gradient-to-br from-[#1DB954] to-[#1ed760] rounded-xl p-4 sm:p-6 text-black">
-              <div className="mb-4 sm:mb-6">
-                <p className="text-black/70 text-sm mb-2">موجودی قابل برداشت</p>
-                <p className="text-3xl sm:text-4xl font-bold">
-                  {financialSummary.availableBalance.toLocaleString()}
-                </p>
-                <p className="text-sm mt-1">تومان</p>
+              <div className="mb-7 grid w-full gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+                <section className="relative min-w-0 w-full rounded-2xl border border-[#282828] bg-[#181818] p-4 sm:p-6" aria-busy={financeLoading}>
+                  {financeLoading && (
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-start justify-end rounded-2xl bg-black/15 p-3">
+                      <span className="inline-flex items-center gap-2 rounded-full bg-[#111]/90 px-3 py-1.5 text-xs font-bold text-[#bbb]"><RefreshCw className="h-3.5 w-3.5 animate-spin text-[#1DB954]" />بروزرسانی بازه</span>
+                    </div>
+                  )}
+                  <div className={`transition-opacity ${financeLoading ? "opacity-55" : "opacity-100"}`}>
+                    <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <h2 className="text-xl font-bold text-white">روند درآمد</h2>
+                        <p className="mt-1 text-xs text-[#888]">{money(finance.summary.income_amount)} از {compact(finance.summary.plays_count)} استریم</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ChartViewToggle value={chartView} onChange={setChartView} />
+                        <div className="flex gap-1.5 overflow-x-auto">
+                          {rangeOptions.map((item) => (
+                            <button key={item.value} onClick={() => setTimeRange(item.value)} className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${timeRange === item.value ? "bg-[#1DB954] text-black" : "bg-[#282828] text-[#aaa]"}`}>{item.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {chartView === "timeline" ? (
+                      <PremiumTimelineChart
+                        points={finance.chart.map((item, index) => ({ label: item.time || item.label || String(index + 1), value: num(item.income) }))}
+                        seriesName="درآمد"
+                        valueFormatter={money}
+                        axisValueFormatter={compactMoney}
+                        axisLabelFormatter={(label) => chartDateLabel(label, timeRange === "monthly" || timeRange === "all")}
+                        tooltipLabelFormatter={(label) => chartDateLabel(label, timeRange === "monthly" || timeRange === "all")}
+                        emptyText="در این بازه درآمدی ثبت نشده است."
+                        height={248}
+                        integerValues={false}
+                        initialWindow="all"
+                      />
+                    ) : finance.chart.length ? (
+                      <div className="overflow-x-auto pb-2" dir="ltr">
+                        <div className="flex h-60 min-w-[640px] items-end gap-2 border-b border-[#303030] px-2">
+                          {finance.chart.map((item, index) => {
+                            const value = num(item.income);
+                            const height = value > 0 && maxChart > 0 ? Math.max(8, value / maxChart * 200) : 0;
+                            const raw = item.time || item.label || String(index + 1);
+                            const label = item.time ? chartDateLabel(item.time, timeRange === "monthly" || timeRange === "all") : raw;
+                            return (
+                              <div key={`${raw}-${index}`} className="group flex min-w-[40px] flex-1 flex-col items-center gap-2">
+                                <div className="relative flex h-[200px] w-full items-end justify-center">
+                                  <div className="absolute bottom-full mb-2 hidden whitespace-nowrap rounded-md bg-black px-2 py-1 text-xs text-white group-hover:block">{money(item.income)}</div>
+                                  <div className="w-full max-w-11 rounded-t-md bg-gradient-to-t from-[#147c3b] to-[#1ed760]" style={{ height: `${height}px` }} />
+                                </div>
+                                <span className="text-[10px] text-[#777]">{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : <div className="flex h-52 items-center justify-center text-[#777]">در این بازه درآمدی ثبت نشده است.</div>}
+                  </div>
+                </section>
+
+                <section className="w-full rounded-2xl border border-[#282828] bg-[#181818] p-5 sm:p-6 xl:w-[280px]">
+                  <h2 className="mb-5 text-xl font-bold text-white">درخواست تسویه</h2>
+                  <div className="mb-5 rounded-2xl bg-gradient-to-br from-[#1DB954] to-[#14853f] p-5 text-black">
+                    <p className="text-sm font-semibold opacity-75">مبلغ قابل تسویه</p>
+                    <p className="mt-2 break-words text-2xl font-black">{money(wallet.withdrawable_credit)}</p>
+                    {num(wallet.available_credit) !== num(wallet.withdrawable_credit) && <p className="mt-2 text-xs font-semibold opacity-70">موجودی دقیق: {money(wallet.available_credit)}</p>}
+                  </div>
+                  <div className="mb-4 rounded-xl border border-[#303030] bg-[#202020] p-3 text-xs leading-5 text-[#aaa]">
+                    حداقل مبلغ برای ثبت درخواست: <strong className="text-white">{money(minimumPayout)}</strong>
+                  </div>
+                  {wallet.has_active_request ? (
+                    <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-200">یک درخواست فعال دارید. پس از تعیین تکلیف، امکان ثبت درخواست جدید فراهم می‌شود.</div>
+                  ) : !meetsMinimumPayout ? (
+                    <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm leading-6 text-amber-200">
+                      برای امکان ثبت درخواست، <strong>{money(amountNeededForPayout)}</strong> دیگر به موجودی قابل تسویه نیاز دارید.
+                    </div>
+                  ) : null}
+                  <button onClick={requestPayout} disabled={requesting || !canRequestPayout} className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 font-black text-black transition hover:bg-[#e8e8e8] disabled:cursor-not-allowed disabled:opacity-40">
+                    <ArrowDownToLine className="h-5 w-5" />{requesting ? "در حال ثبت..." : "تسویه کل موجودی"}
+                  </button>
+                </section>
               </div>
 
-              <div className="space-y-3 mb-4 sm:mb-6 bg-black/10 rounded-lg p-3 sm:p-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-black/70">در انتظار تسویه</span>
-                  <span className="font-semibold">
-                    {financialSummary.totalPendingWithdrawals.toLocaleString()}
-                  </span>
+              <section className="rounded-2xl border border-[#282828] bg-[#181818] p-4 sm:p-6">
+                <div className="mb-6 flex items-center justify-between">
+                  <div><h2 className="text-xl font-bold text-white">نوع حساب شنوندگان</h2><p className="mt-1 text-xs text-[#888]">درآمد و استریم بر اساس پلن مخاطب</p></div>
+                  <CreditCard className="h-6 w-6 text-[#1DB954]" />
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-black/70">برداشت‌های موفق</span>
-                  <span className="font-semibold">
-                    {financialSummary.successfulWithdrawals} مورد
-                  </span>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-xl bg-[#222] p-5">
+                    <div className="mb-4 flex justify-between"><span className="font-bold text-white">پریمیوم</span><span className="text-[#1DB954]">{premiumPercent}%</span></div>
+                    <div className="mb-4 h-2 overflow-hidden rounded-full bg-[#333]"><div className="h-full bg-[#1DB954]" style={{ width: `${premiumPercent}%` }} /></div>
+                    <div className="flex justify-between text-sm text-[#999]"><span>{compact(finance.summary.premium_plays)} استریم</span><span>{money(finance.summary.premium_income)}</span></div>
+                    <p className="mt-3 border-t border-[#333] pt-3 text-xs text-[#777]">نرخ فعلی هر پخش: {money(finance.summary.current_premium_play_rate)}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#222] p-5">
+                    <div className="mb-4 flex justify-between"><span className="font-bold text-white">رایگان</span><span className="text-blue-400">{freePercent}%</span></div>
+                    <div className="mb-4 h-2 overflow-hidden rounded-full bg-[#333]"><div className="h-full bg-blue-500" style={{ width: `${freePercent}%` }} /></div>
+                    <div className="flex justify-between text-sm text-[#999]"><span>{compact(finance.summary.free_plays)} استریم</span><span>{money(finance.summary.free_income)}</span></div>
+                    <p className="mt-3 border-t border-[#333] pt-3 text-xs text-[#777]">نرخ فعلی هر پخش: {money(finance.summary.current_free_play_rate)}</p>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-black/70">آخرین برداشت</span>
-                  <span className="font-semibold">
-                    {withdrawalHistory.find((w) => w.status === "completed")
-                      ?.completedDate || "-"}
-                  </span>
+              </section>
+            </>
+          )}
+
+          {selectedView === "streams" && (
+            <section className="overflow-hidden rounded-2xl border border-[#282828] bg-[#181818]">
+              <div className="border-b border-[#282828] p-5 sm:p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-white">درآمد هر آهنگ</h2>
+                    <p className="mt-1 text-xs text-[#888]">مرتب‌شده بر اساس بیشترین مبلغ قابل تسویه در همین لحظه</p>
+                  </div>
+                  <BarChart3 className="h-6 w-6 text-[#1DB954]" />
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-[#303030] bg-[#202020] p-4"><p className="text-xs text-[#777]">کل درآمد آهنگ‌ها</p><p className="mt-1 font-black text-white">{money(totalSongIncome)}</p></div>
+                  <div className="rounded-xl border border-[#303030] bg-[#202020] p-4"><p className="text-xs text-[#777]">واریزشده</p><p className="mt-1 font-black text-violet-300">{money(totalSongDeposited)}</p></div>
+                  <div className="rounded-xl border border-[#303030] bg-[#202020] p-4"><p className="text-xs text-[#777]">باقی‌مانده برای واریز</p><p className="mt-1 font-black text-[#1DB954]">{money(totalSongRemaining)}</p></div>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-xs text-[#777]">
+                  <span>{songsCount.toLocaleString("fa-IR")} آهنگ</span>
+                  <span>{songs.length.toLocaleString("fa-IR")} مورد نمایش داده شده</span>
                 </div>
               </div>
 
-              <button
-                className="w-full py-3 bg-black hover:bg-black/90 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
-                disabled={financialSummary.availableBalance < 100000}
-              >
-                {financialSummary.availableBalance < 100000
-                  ? "حداقل 100,000 تومان"
-                  : "درخواست برداشت"}
-              </button>
-              {financialSummary.availableBalance < 100000 && (
-                <p className="text-xs text-black/60 mt-2 text-center">
-                  حداقل موجودی برای برداشت: 100,000 تومان
-                </p>
-              )}
-            </div>
-          </div>
+              {songs.length ? (
+                <>
+                  <div className="hidden grid-cols-[minmax(230px,1.25fr)_minmax(145px,.8fr)_minmax(145px,.8fr)_minmax(165px,.9fr)_100px] gap-4 border-b border-[#282828] px-6 py-3 text-xs font-bold text-[#777] lg:grid">
+                    <span>آهنگ</span><span>کل درآمد</span><span>واریزشده</span><span>باقی‌مانده</span><span>وضعیت</span>
+                  </div>
+                  <div className="divide-y divide-[#282828]">
+                    {songs.map((song) => {
+                      const deleted = song.status === "deleted";
+                      const pending = num(song.pending_income);
+                      return (
+                        <div key={song.id} className={`grid gap-4 p-4 transition lg:grid-cols-[minmax(230px,1.25fr)_minmax(145px,.8fr)_minmax(145px,.8fr)_minmax(165px,.9fr)_100px] lg:items-center lg:px-6 ${deleted ? "bg-[#171717] opacity-70" : "hover:bg-[#202020]"}`}>
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-[#2b2b2b]">
+                              {song.cover_image ? <img src={song.cover_image} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-[#777]">♪</div>}
+                            </div>
+                            <div className="min-w-0">
+                              <p className={`truncate font-bold ${deleted ? "text-[#999]" : "text-white"}`}>{song.title}</p>
+                              {song.title_en && <p className="truncate text-xs text-[#777]" dir="ltr">{song.title_en}</p>}
+                              <p className="mt-1 text-[11px] text-[#666]">{compact(song.total_plays)} استریم</p>
+                            </div>
+                          </div>
+                          <div><span className="text-xs text-[#777] lg:hidden">کل درآمد: </span><strong className="text-white">{money(song.total_income ?? song.income)}</strong></div>
+                          <div><span className="text-xs text-[#777] lg:hidden">واریزشده: </span><strong className="text-violet-300">{money(song.deposited_income)}</strong></div>
+                          <div>
+                            <span className="text-xs text-[#777] lg:hidden">باقی‌مانده: </span><strong className="text-[#1DB954]">{money(song.remaining_income)}</strong>
+                            {pending > 0 ? <p className="mt-1 text-[11px] text-amber-300">{money(pending)} در فرایند تسویه</p> : <p className="mt-1 text-[11px] text-[#777]">قابل تسویه اکنون: {money(song.available_income)}</p>}
+                          </div>
+                          <span className="w-fit rounded-full bg-[#2a2a2a] px-3 py-1 text-xs text-[#bbb]">{deleted ? "حذف‌شده" : "فعال"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div ref={loadMoreRef} className="flex min-h-24 items-center justify-center border-t border-[#282828] px-4 py-6">
+                    {songsLoadingMore ? (
+                      <span className="inline-flex items-center gap-2 text-sm text-[#999]"><RefreshCw className="h-4 w-4 animate-spin text-[#1DB954]" />در حال بارگذاری آهنگ‌های بیشتر</span>
+                    ) : songsError ? (
+                      <button onClick={() => void loadMoreSongs()} className="rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-200">تلاش دوباره برای ادامه فهرست</button>
+                    ) : songsNext ? (
+                      <span className="text-xs text-[#666]">با ادامه اسکرول، موارد بعدی خودکار بارگذاری می‌شوند.</span>
+                    ) : (
+                      <span className="text-xs text-[#666]">همه آهنگ‌ها نمایش داده شدند.</span>
+                    )}
+                  </div>
+                </>
+              ) : <div className="py-20 text-center text-[#777]">هنوز آهنگی با سابقه مالی وجود ندارد.</div>}
+            </section>
+          )}
+
+          {selectedView === "withdrawals" && (
+            <section className="rounded-2xl border border-[#282828] bg-[#181818] p-4 sm:p-6">
+              <div className="mb-6 flex items-center justify-between">
+                <div><h2 className="text-xl font-bold text-white">تاریخچه تسویه</h2><p className="mt-1 text-xs text-[#888]">{wallet.deposit_requests.total_submissions} درخواست ثبت‌شده</p></div>
+                <ArrowDownToLine className="h-6 w-6 text-[#1DB954]" />
+              </div>
+              <div className="space-y-3">
+                {payouts.length ? payouts.map((item) => {
+                  const meta = statusMeta[item.status] || statusMeta.pending;
+                  const Icon = meta.icon;
+                  return (
+                    <article key={item.id} className="rounded-xl border border-[#2c2c2c] bg-[#202020] p-4 sm:p-5">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${meta.className}`}><Icon className="h-5 w-5" /></div>
+                          <div>
+                            <p className="text-lg font-black text-white">{money(item.amount)}</p>
+                            <p className="mt-1 text-xs text-[#888]">ثبت: {dateLabel(item.submission_date)}</p>
+                            {item.status_change_date && <p className="mt-1 text-xs text-[#777]">آخرین تغییر: {dateLabel(item.status_change_date)}</p>}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-3 py-1 text-xs font-bold ${meta.className}`}>{meta.label}</span>
+                          {item.transaction_id && <span className="rounded-full bg-[#292929] px-3 py-1 text-xs text-[#aaa]" dir="ltr">شناسه: {item.transaction_id}</span>}
+                          {item.status === "pending" && (
+                            <button onClick={() => void cancelPayout(item.id)} disabled={cancellingId === item.id} className="inline-flex items-center gap-1.5 rounded-full border border-red-500/25 bg-red-500/10 px-3 py-1 text-xs font-bold text-red-300 hover:bg-red-500/20 disabled:opacity-50">
+                              <RotateCcw className={`h-3.5 w-3.5 ${cancellingId === item.id ? "animate-spin" : ""}`} />لغو درخواست
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {item.summary && (
+                        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-[#303030] pt-4 text-xs sm:grid-cols-4">
+                          <div><p className="text-[#777]">کل استریم</p><p className="mt-1 font-bold text-white">{compact(item.summary.total_plays || 0)}</p></div>
+                          <div><p className="text-[#777]">پریمیوم</p><p className="mt-1 font-bold text-white">{compact(item.summary.premium_plays || 0)}</p></div>
+                          <div><p className="text-[#777]">رایگان</p><p className="mt-1 font-bold text-white">{compact(item.summary.free_plays || 0)}</p></div>
+                          <div><p className="text-[#777]">شماره درخواست</p><p className="mt-1 font-bold text-white">#{item.id}</p></div>
+                        </div>
+                      )}
+                    </article>
+                  );
+                }) : <div className="py-20 text-center text-[#777]">هنوز درخواست تسویه‌ای ثبت نشده است.</div>}
+              </div>
+            </section>
+          )}
         </>
-      )}
-
-      {/* Streams Tab */}
-      {selectedView === "streams" && (
-        <div className="bg-[#181818] border border-[#282828] rounded-xl overflow-hidden">
-          <div className="p-4 sm:p-6 border-b border-[#282828]">
-            <h3 className="text-lg sm:text-xl font-bold text-white mb-1">
-              تاریخچه پخش و درآمد
-            </h3>
-            <p className="text-[#B3B3B3] text-sm">
-              جزئیات درآمد از پخش آهنگ‌ها
-            </p>
-          </div>
-
-          {/* Mobile Table View */}
-          <div className="block sm:hidden">
-            {streamingRecords.map((record, index) => (
-              <div
-                key={record.id}
-                className={`p-4 hover:bg-[#282828] transition-colors ${
-                  index !== streamingRecords.length - 1
-                    ? "border-b border-[#282828]"
-                    : ""
-                }`}
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 bg-[#1DB954]/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <svg
-                      className="w-5 h-5 text-[#1DB954]"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-white font-semibold text-base truncate">
-                      {record.songTitle}
-                    </h4>
-                    <p className="text-[#B3B3B3] text-sm">{record.date}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-[#282828]/50 rounded-lg p-3">
-                    <p className="text-[#B3B3B3] text-xs mb-1">تعداد پخش</p>
-                    <p className="text-white font-bold text-lg">
-                      {record.plays.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="bg-[#282828]/50 rounded-lg p-3">
-                    <p className="text-[#B3B3B3] text-xs mb-1">درآمد کل</p>
-                    <p className="text-[#1DB954] font-bold text-lg">
-                      {record.totalRevenue.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 pt-3 border-t border-[#282828]">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#B3B3B3]">هر پخش:</span>
-                    <span className="text-white font-semibold">
-                      {record.revenuePerPlay.toLocaleString()} تومان
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Desktop Table View */}
-          <div className="hidden sm:block overflow-x-auto">
-            {/* Table Header */}
-            <div className="grid grid-cols-12 gap-4 p-4 bg-[#282828]/50 text-[#B3B3B3] text-sm font-semibold min-w-[800px]">
-              <div className="col-span-4">عنوان آهنگ</div>
-              <div className="col-span-2 text-center">تعداد پخش</div>
-              <div className="col-span-2 text-center">درآمد هر پخش</div>
-              <div className="col-span-3 text-center">درآمد کل</div>
-              <div className="col-span-1 text-center">تاریخ</div>
-            </div>
-
-            {/* Table Rows */}
-            {streamingRecords.map((record, index) => (
-              <div
-                key={record.id}
-                className={`grid grid-cols-12 gap-4 p-4 hover:bg-[#282828] transition-colors min-w-[800px] ${
-                  index !== streamingRecords.length - 1
-                    ? "border-b border-[#282828]"
-                    : ""
-                }`}
-              >
-                <div className="col-span-4 flex items-center gap-3">
-                  <div className="w-10 h-10 bg-[#1DB954]/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <svg
-                      className="w-5 h-5 text-[#1DB954]"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <span className="text-white font-semibold text-sm truncate">
-                    {record.songTitle}
-                  </span>
-                </div>
-                <div className="col-span-2 flex items-center justify-center">
-                  <span className="text-white font-bold">
-                    {record.plays.toLocaleString()}
-                  </span>
-                </div>
-                <div className="col-span-2 flex items-center justify-center">
-                  <span className="text-[#B3B3B3]">
-                    {record.revenuePerPlay.toLocaleString()} تومان
-                  </span>
-                </div>
-                <div className="col-span-3 flex items-center justify-center">
-                  <span className="text-[#1DB954] font-bold text-lg">
-                    {record.totalRevenue.toLocaleString()} تومان
-                  </span>
-                </div>
-                <div className="col-span-1 flex items-center justify-center">
-                  <span className="text-[#B3B3B3] text-sm">{record.date}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Summary Footer */}
-          <div className="p-4 bg-[#282828]/50 border-t border-[#282828]">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <span className="text-[#B3B3B3] text-sm">مجموع این دوره:</span>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
-                <span className="text-white font-semibold">
-                  {streamingRecords
-                    .reduce((sum, r) => sum + r.plays, 0)
-                    .toLocaleString()}{" "}
-                  پخش
-                </span>
-                <span className="text-[#1DB954] font-bold text-lg sm:text-xl">
-                  {streamingRecords
-                    .reduce((sum, r) => sum + r.totalRevenue, 0)
-                    .toLocaleString()}{" "}
-                  تومان
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Withdrawals Tab */}
-      {selectedView === "withdrawals" && (
-        <div className="space-y-4 sm:space-y-6">
-          {/* Withdrawal Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            <div className="bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
-                  <svg
-                    className="w-5 h-5 text-green-500"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </div>
-                <p className="text-[#B3B3B3] text-sm">برداشت‌های موفق</p>
-              </div>
-              <p className="text-white text-xl sm:text-2xl font-bold">
-                {financialSummary.successfulWithdrawals}
-              </p>
-              <p className="text-green-500 text-sm mt-1">
-                {financialSummary.totalWithdrawn.toLocaleString()} تومان
-              </p>
-            </div>
-
-            <div className="bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-                  <svg
-                    className="w-5 h-5 text-yellow-500"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </div>
-                <p className="text-[#B3B3B3] text-sm">در انتظار تسویه</p>
-              </div>
-              <p className="text-white text-xl sm:text-2xl font-bold">
-                {financialSummary.pendingWithdrawals}
-              </p>
-              <p className="text-yellow-500 text-sm mt-1">
-                {financialSummary.totalPendingWithdrawals.toLocaleString()}{" "}
-                تومان
-              </p>
-            </div>
-
-            <div className="bg-[#181818] border border-[#282828] rounded-xl p-4 sm:p-6 sm:col-span-2 lg:col-span-1">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-red-500/20 rounded-lg flex items-center justify-center">
-                  <svg
-                    className="w-5 h-5 text-red-500"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </div>
-                <p className="text-[#B3B3B3] text-sm">برداشت‌های رد شده</p>
-              </div>
-              <p className="text-white text-xl sm:text-2xl font-bold">
-                {financialSummary.rejectedWithdrawals}
-              </p>
-              <p className="text-red-500 text-sm mt-1">نیاز به بررسی</p>
-            </div>
-          </div>
-
-          {/* Withdrawal History */}
-          <div className="bg-[#181818] border border-[#282828] rounded-xl overflow-hidden">
-            <div className="p-4 sm:p-6 border-b border-[#282828]">
-              <h3 className="text-lg sm:text-xl font-bold text-white mb-1">
-                تاریخچه برداشت‌ها
-              </h3>
-              <p className="text-[#B3B3B3] text-sm">تمام تلاش‌های برداشت وجه</p>
-            </div>
-
-            {withdrawalHistory.map((withdrawal, index) => (
-              <div
-                key={withdrawal.id}
-                className={`p-4 sm:p-5 hover:bg-[#282828] transition-colors ${
-                  index !== withdrawalHistory.length - 1
-                    ? "border-b border-[#282828]"
-                    : ""
-                }`}
-              >
-                {/* Mobile Layout */}
-                <div className="block sm:hidden">
-                  <div className="flex items-start gap-3 mb-4">
-                    <div
-                      className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                        withdrawal.status === "completed"
-                          ? "bg-green-500/20"
-                          : withdrawal.status === "pending"
-                          ? "bg-yellow-500/20"
-                          : "bg-red-500/20"
-                      }`}
-                    >
-                      {withdrawal.status === "completed" ? (
-                        <svg
-                          className="w-6 h-6 text-green-500"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      ) : withdrawal.status === "pending" ? (
-                        <svg
-                          className="w-6 h-6 text-yellow-500"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      ) : (
-                        <svg
-                          className="w-6 h-6 text-red-500"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <p className="text-white font-bold text-lg">
-                          {withdrawal.amount.toLocaleString()} تومان
-                        </p>
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                            withdrawal.status === "completed"
-                              ? "bg-green-500/20 text-green-500"
-                              : withdrawal.status === "pending"
-                              ? "bg-yellow-500/20 text-yellow-500"
-                              : "bg-red-500/20 text-red-500"
-                          }`}
-                        >
-                          {withdrawal.status === "completed"
-                            ? "تکمیل شده"
-                            : withdrawal.status === "pending"
-                            ? "در انتظار"
-                            : "رد شده"}
-                        </span>
-                      </div>
-                      <div className="space-y-1 text-sm text-[#B3B3B3]">
-                        <p>درخواست: {withdrawal.requestDate}</p>
-                        {withdrawal.completedDate && (
-                          <p>تکمیل: {withdrawal.completedDate}</p>
-                        )}
-                        <p>حساب: {withdrawal.bankAccount}</p>
-                      </div>
-                    </div>
-                  </div>
-                  {withdrawal.status === "pending" && (
-                    <button className="w-full py-2 bg-red-500/20 hover:bg-red-500/30 text-red-500 font-semibold text-sm rounded-lg transition-colors">
-                      لغو درخواست
-                    </button>
-                  )}
-                </div>
-
-                {/* Desktop Layout */}
-                <div className="hidden sm:flex sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                        withdrawal.status === "completed"
-                          ? "bg-green-500/20"
-                          : withdrawal.status === "pending"
-                          ? "bg-yellow-500/20"
-                          : "bg-red-500/20"
-                      }`}
-                    >
-                      {withdrawal.status === "completed" ? (
-                        <svg
-                          className="w-6 h-6 text-green-500"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      ) : withdrawal.status === "pending" ? (
-                        <svg
-                          className="w-6 h-6 text-yellow-500"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      ) : (
-                        <svg
-                          className="w-6 h-6 text-red-500"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        <p className="text-white font-bold text-lg">
-                          {withdrawal.amount.toLocaleString()} تومان
-                        </p>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                            withdrawal.status === "completed"
-                              ? "bg-green-500/20 text-green-500"
-                              : withdrawal.status === "pending"
-                              ? "bg-yellow-500/20 text-yellow-500"
-                              : "bg-red-500/20 text-red-500"
-                          }`}
-                        >
-                          {withdrawal.status === "completed"
-                            ? "تکمیل شده"
-                            : withdrawal.status === "pending"
-                            ? "در انتظار"
-                            : "رد شده"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm text-[#B3B3B3]">
-                        <span>درخواست: {withdrawal.requestDate}</span>
-                        {withdrawal.completedDate && (
-                          <span>تکمیل: {withdrawal.completedDate}</span>
-                        )}
-                        <span>حساب: {withdrawal.bankAccount}</span>
-                      </div>
-                    </div>
-                  </div>
-                  {withdrawal.status === "pending" && (
-                    <button className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-500 font-semibold text-sm rounded-lg transition-colors">
-                      لغو درخواست
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 };

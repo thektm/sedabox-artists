@@ -3,6 +3,7 @@ import { useNavigation } from "../contexts/NavigationContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useResponsive } from "../hooks/useResponsive";
 import ConfirmModal from "./ConfirmModal";
+import { useNotifications } from "../contexts/NotificationContext";
 
 const TopNav: React.FC = () => {
   const { currentPage, navigateTo } = useNavigation();
@@ -10,38 +11,21 @@ const TopNav: React.FC = () => {
   const { isMobile, isTablet } = useResponsive();
   const showMobileLayout = isMobile || isTablet;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  // Notifications
-  type Notification = {
-    id: string;
-    title: string;
-    body?: string;
-    read?: boolean;
-  };
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: "1",
-      title: "آلبوم شما تأیید و منتشر شد",
-      body: "آلبوم جدید شما اکنون در دسترس عموم قرار گرفته است",
-    },
-    {
-      id: "2",
-      title: "13 لایک جدید روی آهنگ X",
-      body: "کاربران بیشتری آهنگ شما را پسندیده‌اند",
-    },
-    {
-      id: "3",
-      title: "12 دنبال‌کننده جدید",
-      body: "کاربران جدیدی شما را دنبال کرده‌اند",
-    },
-  ]);
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const {
+    notifications,
+    unreadCount,
+    isLoading: notificationsLoading,
+    refreshNotifications,
+    markAsRead,
+    formatTimeAgo,
+  } = useNotifications();
   const [showNotifications, setShowNotifications] = useState(false);
   const [panelPosition, setPanelPosition] = useState<{
     x: number;
     y: number;
   } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const removingRef = useRef<Record<string, boolean>>({});
+  const [removingIds, setRemovingIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -110,19 +94,28 @@ const TopNav: React.FC = () => {
     } else {
       setPanelPosition(null);
     }
-    setShowNotifications((s) => !s);
+    setShowNotifications((currentlyOpen) => {
+      const nextOpen = !currentlyOpen;
+      if (nextOpen) void refreshNotifications();
+      return nextOpen;
+    });
   };
 
-  const markRead = (id: string) => {
-    // animate out then remove
-    removingRef.current[id] = true;
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    );
-    setTimeout(() => {
-      setNotifications((prev) => prev.filter((n) => n.id !== id));
-      delete removingRef.current[id];
-    }, 350); // match CSS transition
+  const markRead = async (id: number) => {
+    if (removingIds.has(id)) return;
+    setRemovingIds((current) => new Set(current).add(id));
+    await new Promise((resolve) => window.setTimeout(resolve, 220));
+    try {
+      await markAsRead(id);
+    } catch (error) {
+      console.error("Could not mark artist notification as read", error);
+    } finally {
+      setRemovingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   if (showMobileLayout) {
@@ -136,7 +129,7 @@ const TopNav: React.FC = () => {
           <div className="flex items-center justify-between px-4 py-3">
             {/* Logo */}
             <div className="flex items-center gap-2">
-              <img src="/logo.png" alt="SedaBox" className="h-8 w-8" />
+              <img src="/logo.png" alt="صداباکس" className="h-8 w-8" />
               <div>
                 <h1 className="text-white font-bold text-sm">صدا باکس</h1>
                 <p className="text-[#B3B3B3] text-xs">داشبورد هنرمند</p>
@@ -147,7 +140,7 @@ const TopNav: React.FC = () => {
             <div className="flex items-center gap-2">
               {/* Notifications Button (mobile) */}
               <button
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                   e.stopPropagation();
                   toggleNotifications(e);
                 }}
@@ -245,32 +238,35 @@ const TopNav: React.FC = () => {
               </button>
             </div>
             <div className="max-h-72 overflow-auto p-3 space-y-2">
-              {notifications.length === 0 && (
+              {notificationsLoading && notifications.length === 0 && (
+                <p className="text-[#B3B3B3] text-sm">در حال دریافت اعلان‌ها…</p>
+              )}
+              {!notificationsLoading && notifications.length === 0 && (
                 <p className="text-[#B3B3B3] text-sm">اعلانی وجود ندارد</p>
               )}
               {notifications.map((n) => (
                 <div
                   key={n.id}
                   className={`flex items-start gap-3 bg-[#121212] p-3 rounded-lg transition-all duration-300 ${
-                    removingRef.current[n.id]
+                    removingIds.has(n.id)
                       ? "translate-x-6 opacity-0 h-0 p-0 overflow-hidden"
                       : "opacity-100"
                   }`}
                 >
                   <input
                     type="checkbox"
-                    checked={!!n.read}
-                    onChange={() => markRead(n.id)}
+                    checked={false}
+                    onChange={() => void markRead(n.id)}
                     className="mt-1"
                     aria-label={`mark-${n.id}`}
                   />
-                  <div>
-                    <p className="text-white font-semibold text-sm">
-                      {n.title}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-white font-semibold text-sm leading-6">
+                      {n.text}
                     </p>
-                    {n.body && (
-                      <p className="text-[#B3B3B3] text-xs">{n.body}</p>
-                    )}
+                    <p className="text-[#777] text-[11px] mt-1">
+                      {formatTimeAgo(n.created_at)}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -297,7 +293,7 @@ const TopNav: React.FC = () => {
           <div className="p-6 border-b border-[#282828]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <img src="/logo.png" alt="SedaBox" className="h-10 w-10" />
+                <img src="/logo.png" alt="صداباکس" className="h-10 w-10" />
                 <div>
                   <h2 className="text-white font-bold text-lg">صدا باکس</h2>
                   <p className="text-[#B3B3B3] text-xs">داشبورد هنرمند</p>
@@ -330,7 +326,7 @@ const TopNav: React.FC = () => {
               {[
                 { id: "home", label: "خانه", icon: "🏠" },
                 { id: "songs", label: "مدیریت آهنگ‌ها", icon: "🎵" },
-                { id: "albums", label: "مدیریت آلبوم‌ها", icon: "💿" },
+                { id: "releases", label: "انتشارها", icon: "💿" },
                 { id: "analytics", label: "تحلیل و آمار", icon: "📊" },
                 { id: "financial", label: "گزارش مالی", icon: "💰" },
                 { id: "settings", label: "تنظیمات", icon: "⚙️" },
@@ -421,7 +417,7 @@ const TopNav: React.FC = () => {
         <div className="flex items-center gap-3">
           {/* Notifications (desktop) */}
           <button
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               toggleNotifications(e as React.MouseEvent);
             }}
@@ -516,32 +512,35 @@ const TopNav: React.FC = () => {
               </button>
             </div>
             <div className="max-h-80 overflow-auto p-3 space-y-2">
-              {notifications.length === 0 && (
+              {notificationsLoading && notifications.length === 0 && (
+                <p className="text-[#B3B3B3] text-sm">در حال دریافت اعلان‌ها…</p>
+              )}
+              {!notificationsLoading && notifications.length === 0 && (
                 <p className="text-[#B3B3B3] text-sm">اعلانی وجود ندارد</p>
               )}
               {notifications.map((n) => (
                 <div
                   key={n.id}
                   className={`flex items-start gap-3 bg-[#121212] p-3 rounded-lg transition-all duration-300 ${
-                    removingRef.current[n.id]
+                    removingIds.has(n.id)
                       ? "translate-x-6 opacity-0 h-0 p-0 overflow-hidden"
                       : "opacity-100"
                   }`}
                 >
                   <input
                     type="checkbox"
-                    checked={!!n.read}
-                    onChange={() => markRead(n.id)}
+                    checked={false}
+                    onChange={() => void markRead(n.id)}
                     className="mt-1"
                     aria-label={`mark-${n.id}`}
                   />
-                  <div>
-                    <p className="text-white font-semibold text-sm">
-                      {n.title}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-white font-semibold text-sm leading-6">
+                      {n.text}
                     </p>
-                    {n.body && (
-                      <p className="text-[#B3B3B3] text-xs">{n.body}</p>
-                    )}
+                    <p className="text-[#777] text-[11px] mt-1">
+                      {formatTimeAgo(n.created_at)}
+                    </p>
                   </div>
                 </div>
               ))}

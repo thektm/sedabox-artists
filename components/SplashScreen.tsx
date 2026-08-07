@@ -5,7 +5,7 @@ const SplashScreen: React.FC = () => {
     <div dir="rtl" className="fixed inset-0 bg-[#121212] flex flex-col items-center justify-center z-50">
       {/* Logo */}
       <div className="mb-8">
-        <img src="/logo-text.png" alt="Sedabox" className="h-45 w-auto" />
+        <img src="/logo-text.png" alt="صداباکس" className="h-45 w-auto" />
       </div>
 
       {/* Loading Dots */}

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { X } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
 import NewArtistTab from "./NewArtistTab";
 import ExistingArtistTab from "./ExistingArtistTab";
 
@@ -12,13 +13,17 @@ const ArtistVerificationModal: React.FC<ArtistVerificationModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  const { logout, error, clearError } = useAuth();
   const [activeTab, setActiveTab] = useState<"new" | "existing">("new");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (data: any) => {
+    clearError();
     setIsSubmitting(true);
     try {
       await onSubmit(data, activeTab);
+    } catch (err) {
+      // Error handled in AuthContext
     } finally {
       setIsSubmitting(false);
     }
@@ -62,12 +67,37 @@ const ArtistVerificationModal: React.FC<ArtistVerificationModalProps> = ({
                   </p>
                 </div>
               </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    try {
+                      logout();
+                    } finally {
+                      onClose && onClose();
+                    }
+                  }}
+                  className="text-sm bg-red-600 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-700 active:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-500/40 shadow-sm transition-colors duration-150"
+                >
+                  خروج
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Tabs */}
         <div className="bg-[#121212] border-b border-[#282828] px-4 pt-3 md:px-8 md:pt-6">
+          {error && (
+            <div className="mb-4 p-4 bg-red-500/10 border border-red-500/50 rounded-xl flex items-center justify-between">
+              <p className="text-red-500 text-sm font-semibold">{error}</p>
+              <button
+                onClick={clearError}
+                className="text-red-500 hover:text-red-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => setActiveTab("new")}

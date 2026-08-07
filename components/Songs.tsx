@@ -1,1331 +1,320 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Edit3,
+  Loader2,
+  Music2,
+  RefreshCw,
+  Search,
+  Trash2,
+  Unlink,
+} from "lucide-react";
+import { apiRequest, fetchAllPages, getApiErrorMessage, resolveMediaUrl } from "../lib/api";
 import { useNavigation } from "../contexts/NavigationContext";
+import { useToast } from "../contexts/ToastContext";
+import ConfirmModal from "./ConfirmModal";
+import SongModal from "./SongModal";
+import { ArtistOption, PartialSong, SongMetadata, SongStatus } from "./types";
 
-// Song metadata interface matching Spotify's requirements
-interface SongMetadata {
+type Tab = "all" | "published" | "pending" | "rejected" | "draft" | "deleted";
+
+interface ApiSong {
   id: number;
   title: string;
-  artist: string;
-  featuredArtists: string[];
-  album: string;
-  duration: string;
-  plays: string;
-  status: "published" | "draft" | "pending" | "rejected";
-  approvalStatus: "approved" | "pending" | "rejected" | "none";
-  image: string;
-  audioFile?: string;
-
-  // Spotify Algorithm Metadata
-  releaseDate: string;
-  genre: string[];
-  subGenre: string[];
-  mood: string[];
-  language: string;
-  explicit: boolean;
-
-  // Audio Features (for Spotify algorithm)
-  tempo: number; // BPM
-  energy: number; // 0-100
-  danceability: number; // 0-100
-  valence: number; // 0-100 (positivity)
-  acousticness: number; // 0-100
-  instrumentalness: number; // 0-100
-  liveness: boolean; // true/false
-  speechiness: number; // 0-100
-
-  // Additional Metadata
-  label: string;
-  producers: string[];
-  composers: string[];
-  lyricists: string[];
+  title_fa?: string;
+  title_en?: string;
+  artist_name?: string;
+  featured_artists?: ArtistOption[];
+  album_title?: string | null;
+  album_id?: number | null;
+  album_active_songs_count?: number;
+  duration_display?: string;
+  duration_seconds?: number;
+  plays?: number;
+  status?: SongStatus;
+  cover_image?: string;
+  audio_file?: string;
+  stream_url?: string;
+  release_date?: string;
+  genre_ids?: Array<{ id: number; title: string }>;
+  sub_genre_ids?: Array<{ id: number; title: string }>;
+  mood_ids?: Array<{ id: number; title: string }>;
+  tag_ids?: Array<{ id: number; title: string }>;
+  language?: string;
+  tempo?: number;
+  energy?: number;
+  danceability?: number;
+  valence?: number;
+  acousticness?: number;
+  instrumentalness?: number;
+  live_performed?: boolean;
+  speechiness?: number;
+  label?: string;
+  label_en?: string;
+  producers?: string[];
+  producers_en?: string[];
+  composers?: string[];
+  composers_en?: string[];
+  lyricists?: string[];
+  lyricists_en?: string[];
   lyrics?: string;
-
-  // Marketing & Discovery
-  tags: string[];
-  description: string;
-  credits: string;
+  lyrics_en?: string;
+  description?: string;
+  description_en?: string;
+  credits?: string;
+  credits_en?: string;
+  is_single?: boolean;
+  requires_reapproval?: boolean;
+  linked_release_statuses?: string[];
 }
+
+const statusInfo: Record<SongStatus, { label: string; className: string }> = {
+  published: { label: "منتشر شده", className: "bg-[#1DB954]/15 text-[#1DB954]" },
+  approved: { label: "تأیید شده", className: "bg-blue-500/15 text-blue-300" },
+  pending: { label: "در انتظار بررسی", className: "bg-amber-500/15 text-amber-300" },
+  rejected: { label: "رد شده", className: "bg-red-500/15 text-red-300" },
+  draft: { label: "پیش‌نویس", className: "bg-[#555]/20 text-[#bbb]" },
+  deleted: { label: "حذف‌شده", className: "bg-white/10 text-[#8b8b8b]" },
+};
+
+const mapSong = (song: ApiSong): SongMetadata => {
+  const featured = song.featured_artists || [];
+  const status = song.status || "draft";
+  return {
+    id: Number(song.id),
+    title: song.title_fa ?? song.title ?? "",
+    title_fa: song.title_fa ?? song.title ?? "",
+    title_en: song.title_en || "",
+    artist: song.artist_name || "",
+    featuredArtists: featured,
+    featured_artists: featured,
+    featured_artist_ids: featured.map((artist) => artist.id),
+    album: song.album_title || "",
+    album_id: song.album_id ?? null,
+    album_active_songs_count: Number(song.album_active_songs_count || 0),
+    duration: song.duration_display || (song.duration_seconds ? `${Math.floor(song.duration_seconds / 60)}:${String(song.duration_seconds % 60).padStart(2, "0")}` : "0:00"),
+    plays: String(song.plays || 0),
+    status,
+    approvalStatus: status === "published" || status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "pending" ? "pending" : "none",
+    image: resolveMediaUrl(song.cover_image || ""),
+    audioFile: song.audio_file || song.stream_url,
+    releaseDate: song.release_date || "",
+    release_date: song.release_date || "",
+    genre: (song.genre_ids || []).map((item) => item.title),
+    subGenre: (song.sub_genre_ids || []).map((item) => item.title),
+    mood: (song.mood_ids || []).map((item) => item.title),
+    tags: (song.tag_ids || []).map((item) => item.title),
+    genre_ids: (song.genre_ids || []).map((item) => item.id),
+    sub_genre_ids: (song.sub_genre_ids || []).map((item) => item.id),
+    mood_ids: (song.mood_ids || []).map((item) => item.id),
+    tag_ids: (song.tag_ids || []).map((item) => item.id),
+    language: song.language || "fa",
+    tempo: song.tempo ?? 120,
+    energy: song.energy ?? 50,
+    danceability: song.danceability ?? 50,
+    valence: song.valence ?? 50,
+    acousticness: song.acousticness ?? 0,
+    instrumentalness: song.instrumentalness ?? 0,
+    liveness: Boolean(song.live_performed),
+    live_performed: Boolean(song.live_performed),
+    speechiness: song.speechiness ?? 0,
+    label: song.label || "",
+    label_en: song.label_en || "",
+    producers: song.producers || [],
+    producers_en: song.producers_en || [],
+    composers: song.composers || [],
+    composers_en: song.composers_en || [],
+    lyricists: song.lyricists || [],
+    lyricists_en: song.lyricists_en || [],
+    lyrics: song.lyrics || "",
+    lyrics_en: song.lyrics_en || "",
+    description: song.description || "",
+    description_en: song.description_en || "",
+    credits: song.credits || "",
+    credits_en: song.credits_en || "",
+    is_single: Boolean(song.is_single),
+    requires_reapproval: Boolean(song.requires_reapproval),
+    linked_release_statuses: song.linked_release_statuses || [],
+  };
+};
 
 const Songs: React.FC = () => {
   const { navigateTo } = useNavigation();
-  const [activeTab, setActiveTab] = useState<"all" | "published" | "pending">(
-    "all"
-  );
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingSong, setEditingSong] = useState<SongMetadata | null>(null);
-  const [modalStep, setModalStep] = useState(1);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(
-    null
-  );
-  const [isSingleRelease, setIsSingleRelease] = useState(false);
+  const { showToast } = useToast();
+  const [songs, setSongs] = useState<SongMetadata[]>([]);
+  const [tab, setTab] = useState<Tab>("all");
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<SongMetadata | null>(null);
+  const [songAction, setSongAction] = useState<{ song: SongMetadata; mode: "detach" | "delete" } | null>(null);
+  const [pendingReviewSave, setPendingReviewSave] = useState<PartialSong | null>(null);
 
-  const stepsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const loadSongs = useCallback(async (quiet = false) => {
+    quiet ? setRefreshing(true) : setLoading(true);
+    try {
+      const response = await fetchAllPages<ApiSong>("/artist/songs/");
+      setSongs(response.map(mapSong));
+      if (quiet) showToast("فهرست آهنگ‌ها با موفقیت به‌روزرسانی شد.", "success");
+    } catch (error) {
+      showToast(getApiErrorMessage(error, "دریافت فهرست آهنگ‌ها انجام نشد."), "error");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [showToast]);
 
-  const [formData, setFormData] = useState<Partial<SongMetadata>>({
-    featuredArtists: [],
-    genre: [],
-    subGenre: [],
-    mood: [],
-    language: "fa",
-    explicit: false,
-    tempo: 120,
-    energy: 50,
-    danceability: 50,
-    valence: 50,
-    acousticness: 50,
-    instrumentalness: 0,
-    liveness: false,
-    speechiness: 10,
-    producers: [],
-    composers: [],
-    lyricists: [],
-    tags: [],
-  });
+  useEffect(() => { void loadSongs(); }, [loadSongs]);
 
-  const [songs, setSongs] = useState<SongMetadata[]>([
-    {
-      id: 1,
-      title: "آهنگ جدید",
-      artist: "شما",
-      featuredArtists: ["هنرمند مهمان"],
-      album: "آلبوم اول",
-      duration: "3:45",
-      plays: "1.2K",
-      status: "published",
-      approvalStatus: "approved",
-      image: "https://picsum.photos/400/400?random=1",
-      releaseDate: "2024-01-15",
-      genre: ["پاپ", "راک"],
-      subGenre: ["پاپ راک"],
-      mood: ["شاد", "پرانرژی"],
-      language: "fa",
-      explicit: false,
-      tempo: 128,
-      energy: 85,
-      danceability: 75,
-      valence: 80,
-      acousticness: 20,
-      instrumentalness: 5,
-      liveness: false,
-      speechiness: 8,
-      label: "لیبل موسیقی",
-      producers: ["تهیه کننده 1"],
-      composers: ["آهنگساز 1"],
-      lyricists: ["ترانه سرا 1"],
-      tags: ["پاپ", "شاد", "رقص"],
-      description: "یک آهنگ شاد و پرانرژی",
-      credits: "تمامی حقوق محفوظ است",
-    },
-    {
-      id: 2,
-      title: "ترانه عشق",
-      artist: "شما",
-      featuredArtists: [],
-      album: "آلبوم اول",
-      duration: "4:12",
-      plays: "3.5K",
-      status: "published",
-      approvalStatus: "approved",
-      image: "https://picsum.photos/400/400?random=2",
-      releaseDate: "2024-02-20",
-      genre: ["سنتی", "پاپ"],
-      subGenre: ["پاپ سنتی"],
-      mood: ["عاشقانه", "آرام"],
-      language: "fa",
-      explicit: false,
-      tempo: 95,
-      energy: 60,
-      danceability: 45,
-      valence: 70,
-      acousticness: 65,
-      instrumentalness: 10,
-      liveness: false,
-      speechiness: 15,
-      label: "لیبل موسیقی",
-      producers: ["تهیه کننده 2"],
-      composers: ["آهنگساز 2"],
-      lyricists: ["ترانه سرا 2"],
-      tags: ["عاشقانه", "آرام", "سنتی"],
-      description: "ترانه‌ای عاشقانه و دلنشین",
-      credits: "تمامی حقوق محفوظ است",
-    },
-    {
-      id: 3,
-      title: "بی‌تو",
-      artist: "شما",
-      featuredArtists: [],
-      album: "آلبوم دوم",
-      duration: "3:28",
-      plays: "2.8K",
-      status: "draft",
-      approvalStatus: "pending",
-      image: "https://picsum.photos/400/400?random=3",
-      releaseDate: "2024-03-10",
-      genre: ["پاپ"],
-      subGenre: ["پاپ مدرن"],
-      mood: ["غمگین", "احساسی"],
-      language: "fa",
-      explicit: false,
-      tempo: 110,
-      energy: 55,
-      danceability: 40,
-      valence: 30,
-      acousticness: 45,
-      instrumentalness: 8,
-      liveness: false,
-      speechiness: 12,
-      label: "لیبل موسیقی",
-      producers: ["تهیه کننده 3"],
-      composers: ["آهنگساز 3"],
-      lyricists: ["ترانه سرا 3"],
-      tags: ["غمگین", "احساسی", "پاپ"],
-      description: "آهنگی احساسی و غمگین",
-      credits: "تمامی حقوق محفوظ است",
-    },
-  ]);
+  const filtered = useMemo(() => songs.filter((song) => {
+    const statusMatch = tab === "all" || song.status === tab || (tab === "published" && song.status === "approved");
+    const needle = query.trim().toLowerCase();
+    const textMatch = !needle || [song.title, song.title_en, song.album, song.artist].some((value) => value?.toLowerCase().includes(needle));
+    return statusMatch && textMatch;
+  }), [query, songs, tab]);
 
-  useEffect(() => {
-    if (isModalOpen && stepsRef.current[modalStep - 1]) {
-      stepsRef.current[modalStep - 1]?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
+  const openEdit = (song: SongMetadata) => {
+    if (song.status === "deleted") return;
+    setEditing(song);
+    setModalOpen(true);
+  };
+
+  const appendArray = (form: FormData, key: string, values: unknown[] | undefined, includeEmpty = false) => {
+    if (values?.length) values.forEach((value) => form.append(key, String(value)));
+    else if (includeEmpty) form.append(key, "");
+  };
+
+  const submitSong = async (data: PartialSong, reviewConfirmed = false) => {
+    const isEdit = Boolean(editing);
+    const requiresReview = Boolean(isEdit && (editing?.requires_reapproval || editing?.status === "published" || editing?.status === "approved"));
+    if (requiresReview && !reviewConfirmed) {
+      setPendingReviewSave(data);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const payload = new FormData();
+      const scalarFields: Array<keyof PartialSong> = [
+        "title", "title_en", "release_date", "language", "description", "description_en", "lyrics", "lyrics_en",
+        "tempo", "energy", "danceability", "valence", "acousticness", "instrumentalness", "speechiness",
+        "label", "label_en", "credits", "credits_en",
+      ];
+      scalarFields.forEach((field) => {
+        const value = data[field];
+        if (value !== undefined && value !== null) payload.append(String(field), String(value));
       });
-    }
-  }, [modalStep, isModalOpen]);
+      payload.set("release_date", String(data.release_date || data.releaseDate || ""));
+      payload.set("is_single", String(Boolean(data.is_single)));
+      payload.set("live_performed", String(Boolean(data.live_performed ?? data.liveness)));
 
-  const filteredSongs =
-    activeTab === "all"
-      ? songs
-      : activeTab === "pending"
-      ? songs.filter((song) => song.approvalStatus === "pending")
-      : songs.filter((song) => song.status === activeTab);
+      appendArray(payload, "genre_ids", data.genre_ids, isEdit);
+      appendArray(payload, "sub_genre_ids", data.sub_genre_ids, isEdit);
+      appendArray(payload, "mood_ids", data.mood_ids, isEdit);
+      appendArray(payload, "tag_ids", data.tag_ids, isEdit);
+      appendArray(payload, "featured_artist_ids", data.featured_artist_ids, isEdit);
+      appendArray(payload, "producers", data.producers, isEdit);
+      appendArray(payload, "producers_en", data.producers_en, isEdit);
+      appendArray(payload, "composers", data.composers, isEdit);
+      appendArray(payload, "composers_en", data.composers_en, isEdit);
+      appendArray(payload, "lyricists", data.lyricists, isEdit);
+      appendArray(payload, "lyricists_en", data.lyricists_en, isEdit);
+      if (data.audio_file) payload.append("audio_file", data.audio_file);
+      if (data.cover_image) payload.append("cover_image", data.cover_image);
+      if (requiresReview) payload.set("confirm_re_review", "true");
 
-  const genres = [
-    "پاپ",
-    "راک",
-    "سنتی",
-    "رپ",
-    "الکترونیک",
-    "جز",
-    "بلوز",
-    "متال",
-    "کلاسیک",
-    "فولک",
-  ];
-  const moods = [
-    "شاد",
-    "غمگین",
-    "آرام",
-    "پرانرژی",
-    "عاشقانه",
-    "احساسی",
-    "مهمانی",
-    "تمرکز",
-    "خواب",
-  ];
-
-  const openModal = (song?: SongMetadata) => {
-    if (song) {
-      setEditingSong(song);
-      setFormData(song);
-      setIsSingleRelease(!song.album || song.album.trim() === "");
-    } else {
-      setEditingSong(null);
-      setFormData({
-        featuredArtists: [],
-        genre: [],
-        subGenre: [],
-        mood: [],
-        language: "fa",
-        explicit: false,
-        tempo: 120,
-        energy: 50,
-        danceability: 50,
-        valence: 50,
-        acousticness: 50,
-        instrumentalness: 0,
-        liveness: false,
-        speechiness: 10,
-        producers: [],
-        composers: [],
-        lyricists: [],
-        tags: [],
+      await apiRequest<{ message: string; song: ApiSong }>(isEdit ? `/artist/songs/${editing!.id}/` : "/artist/songs/", {
+        method: isEdit ? "PATCH" : "POST",
+        body: payload,
       });
-      setIsSingleRelease(false);
+      showToast(isEdit ? "آهنگ ویرایش و برای بررسی ارسال شد." : "آهنگ بارگذاری و برای بررسی ارسال شد.", "success");
+      setModalOpen(false);
+      setEditing(null);
+      await loadSongs();
+    } catch (error) {
+      showToast(getApiErrorMessage(error, isEdit ? "ذخیره تغییرات آهنگ انجام نشد." : "بارگذاری آهنگ انجام نشد."), "error");
+    } finally {
+      setSubmitting(false);
+      if (reviewConfirmed) setPendingReviewSave(null);
     }
-    setModalStep(1);
-    setIsModalOpen(true);
   };
 
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingSong(null);
-    setModalStep(1);
-  };
-
-  const handleInputChange = (field: keyof SongMetadata, value: any) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleArrayInput = (field: keyof SongMetadata, value: string) => {
-    const items = value
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    setFormData((prev) => ({ ...prev, [field]: items }));
-  };
-
-  const handleSubmit = () => {
-    if (editingSong) {
-      // Update existing song
-      setSongs((prev) =>
-        prev.map((song) =>
-          song.id === editingSong.id
-            ? {
-                ...song,
-                ...formData,
-                status: "pending",
-                approvalStatus: "pending",
-              }
-            : song
-        )
-      );
-    } else {
-      // Add new song
-      const newSong: SongMetadata = {
-        id: songs.length + 1,
-        artist: "شما",
-        plays: "0",
-        status: "draft",
-        approvalStatus: "pending",
-        image: `https://picsum.photos/400/400?random=${songs.length + 10}`,
-        duration: "0:00",
-        ...formData,
-      } as SongMetadata;
-      setSongs((prev) => [...prev, newSong]);
+  const confirmSongAction = async () => {
+    if (!songAction) return;
+    const { song, mode } = songAction;
+    setSubmitting(true);
+    try {
+      if (mode === "detach") {
+        if (!song.album_id) return;
+        const response = await apiRequest<{ album_deleted?: boolean }>(`/artist/albums/${song.album_id}/songs/`, {
+          method: "DELETE",
+          body: { song_ids: [song.id] },
+        });
+        setSongs((current) => current.map((item) => item.id === song.id ? { ...item, album: "", album_id: null, album_active_songs_count: 0, is_single: true } : item));
+        showToast(response.album_deleted ? "آهنگ جدا شد و چون آخرین آهنگ فعال بود، آلبوم نیز حذف شد." : "آهنگ از آلبوم جدا و به‌صورت تک‌آهنگ حفظ شد.", "success");
+      } else {
+        const response = await apiRequest<{ deletion: "soft" | "hard"; song?: ApiSong; album_deleted?: boolean }>(`/artist/songs/${song.id}/`, { method: "DELETE" });
+        setSongs((current) => response.deletion === "soft"
+          ? current.map((item) => item.id === song.id ? (response.song ? mapSong(response.song) : { ...item, status: "deleted" }) : item)
+          : current.filter((item) => item.id !== song.id));
+        showToast(response.album_deleted ? "آهنگ حذف شد و چون آخرین آهنگ فعال بود، آلبوم نیز حذف شد." : response.deletion === "soft" ? "آهنگ غیرفعال شد؛ آمار و درآمد آن محفوظ است." : "آهنگ حذف شد.", "success");
+      }
+      await loadSongs();
+      setSongAction(null);
+    } catch (error) {
+      showToast(getApiErrorMessage(error, mode === "detach" ? "جدا کردن آهنگ از آلبوم انجام نشد." : "حذف آهنگ انجام نشد."), "error");
+    } finally {
+      setSubmitting(false);
     }
-    closeModal();
   };
 
-  const handleDelete = (id: number) => {
-    setSongs((prev) => prev.filter((song) => song.id !== id));
-    setShowDeleteConfirm(null);
-  };
+  const actionIsLastAlbumTrack = Boolean(songAction?.song.album_id && songAction.song.album_active_songs_count === 1);
 
-  const handleApprovalChange = (
-    id: number,
-    status: "approved" | "rejected"
-  ) => {
-    setSongs((prev) =>
-      prev.map((song) =>
-        song.id === id
-          ? {
-              ...song,
-              approvalStatus: status,
-              status: status === "approved" ? "published" : "draft",
-            }
-          : song
-      )
-    );
-  };
+
+  const tabs: Array<{ value: Tab; label: string }> = [
+    { value: "all", label: "همه" }, { value: "published", label: "منتشرشده" }, { value: "pending", label: "در انتظار" },
+    { value: "rejected", label: "ردشده" }, { value: "draft", label: "پیش‌نویس" }, { value: "deleted", label: "حذف‌شده" },
+  ];
 
   return (
-    <div className="min-h-full w-full p-6 lg:p-8 pc-compact" dir="rtl">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl lg:text-4xl font-bold text-white mb-2">
-          مدیریت آهنگ‌ها
-        </h1>
-        <p className="text-[#B3B3B3]">آهنگ‌های خود را مدیریت و بارگذاری کنید</p>
+    <div className="min-h-full w-full p-4 sm:p-6 lg:p-8 pc-compact" dir="rtl">
+      <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div><h1 className="mb-2 text-3xl font-black text-white lg:text-4xl">مدیریت آهنگ‌ها</h1><p className="text-[#B3B3B3]">آپلود، ویرایش و پیگیری وضعیت بررسی آثار</p></div>
+        <button onClick={() => void loadSongs(true)} disabled={loading || refreshing} className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#383838] bg-[#181818] text-white hover:bg-[#282828] disabled:opacity-50" title="تازه‌سازی"><RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} /></button>
       </div>
 
-      {/* Actions Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        {/* Tabs */}
-        <div className="flex items-center gap-1 bg-[#181818] p-1 rounded-lg overflow-x-auto w-full sm:w-auto">
-          <button
-            onClick={() => setActiveTab("all")}
-            className={`px-3 sm:px-4 py-2 rounded-md font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap min-w-0 flex-1 sm:flex-none ${
-              activeTab === "all"
-                ? "bg-[#1DB954] text-black"
-                : "text-[#B3B3B3] hover:text-white"
-            }`}
-          >
-            همه ({songs.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("published")}
-            className={`px-3 sm:px-4 py-2 rounded-md font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap min-w-0 flex-1 sm:flex-none ${
-              activeTab === "published"
-                ? "bg-[#1DB954] text-black"
-                : "text-[#B3B3B3] hover:text-white"
-            }`}
-          >
-            منتشر شده ({songs.filter((s) => s.status === "published").length})
-          </button>
-          <button
-            onClick={() => setActiveTab("pending")}
-            className={`px-3 sm:px-4 py-2 rounded-md font-semibold text-xs sm:text-sm transition-all duration-200 whitespace-nowrap min-w-0 flex-1 sm:flex-none ${
-              activeTab === "pending"
-                ? "bg-[#1DB954] text-black"
-                : "text-[#B3B3B3] hover:text-white"
-            }`}
-          >
-            در انتظار تأیید (
-            {songs.filter((s) => s.approvalStatus === "pending").length})
-          </button>
-        </div>
-
-        {/* Upload Button */}
-        <button
-          onClick={() => openModal()}
-          className="w-full sm:w-auto px-4 sm:px-6 py-3 bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-2 min-h-[44px] touch-manipulation"
-        >
-          <svg
-            className="w-5 h-5 flex-shrink-0"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          <span className="text-sm sm:text-base">بارگذاری آهنگ جدید</span>
-        </button>
+      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex gap-1 overflow-x-auto rounded-xl bg-[#181818] p-1">{tabs.map((item)=><button key={item.value} onClick={()=>setTab(item.value)} className={`shrink-0 rounded-lg px-4 py-2 text-xs font-bold transition sm:text-sm ${tab===item.value?"bg-white text-black":"text-[#aaa] hover:bg-[#282828] hover:text-white"}`}>{item.label}</button>)}</div>
+        <div className="relative w-full lg:w-80"><Search className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#666]"/><input value={query} onChange={(e)=>setQuery(e.target.value)} className="w-full rounded-xl border border-[#333] bg-[#181818] py-3 pr-11 pl-4 text-white outline-none placeholder:text-[#666] focus:border-[#1DB954]" placeholder="جستجو در آهنگ‌ها" /></div>
       </div>
 
-      {/* Songs List */}
-      <div className="bg-[#181818] border border-[#282828] rounded-xl overflow-hidden">
-        {/* Table Header - Hidden on mobile */}
-        <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-4 border-b border-[#282828] text-[#B3B3B3] text-sm font-semibold">
-          <div className="col-span-1">#</div>
-          <div className="col-span-4">عنوان</div>
-          <div className="col-span-2">آلبوم</div>
-          <div className="col-span-1">زمان</div>
-          <div className="col-span-1">پخش</div>
-          <div className="col-span-2">وضعیت</div>
-          <div className="col-span-1">عملیات</div>
-        </div>
+      {loading ? <div className="space-y-3">{Array.from({length:6}).map((_,i)=><div key={i} className="h-20 animate-pulse rounded-xl bg-[#181818]" />)}</div> : filtered.length ? <div className="overflow-hidden rounded-2xl border border-[#282828] bg-[#181818]">
+        <div className="hidden grid-cols-[minmax(260px,1fr)_140px_110px_150px_110px] gap-4 border-b border-[#282828] px-6 py-3 text-xs font-bold text-[#777] lg:grid"><span>آهنگ</span><span>آلبوم</span><span>استریم</span><span>وضعیت</span><span className="text-left">عملیات</span></div>
+        <div className="divide-y divide-[#282828]">{filtered.map((song)=>{
+          const deleted = song.status === "deleted";
+          return <article key={song.id} aria-disabled={deleted} onClick={()=>{if(!deleted) navigateTo("details",{type:"song",id:song.id});}} className={`relative grid gap-4 p-4 transition lg:grid-cols-[minmax(260px,1fr)_140px_110px_150px_110px] lg:items-center lg:px-6 ${deleted ? "cursor-not-allowed bg-[#151515] grayscale opacity-55" : "cursor-pointer hover:bg-[#202020]"}`}>
+          {deleted&&<span className="pointer-events-none absolute inset-x-4 top-1/2 z-10 h-px -translate-y-1/2 bg-white/25 lg:inset-x-6"/>}
+          <div className="flex min-w-0 items-center gap-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-[#292929]">{song.image?<img src={song.image} alt="" className="h-full w-full object-cover"/>:<div className="flex h-full items-center justify-center"><Music2 className="h-6 w-6 text-[#666]"/></div>}</div><div className="min-w-0"><p className={`truncate font-black ${deleted ? "text-[#8a8a8a] line-through" : "text-white"}`}>{song.title}</p>{song.title_en&&<p className="truncate text-xs text-[#777]" dir="ltr">{song.title_en}</p>}<p className="mt-1 truncate text-xs text-[#777]">{song.featuredArtists.length ? `feat. ${song.featuredArtists.map((item)=>item.artistic_name||item.name).join("، ")}` : song.artist}</p></div></div>
+          <div className="text-sm text-[#aaa]"><span className="ml-1 text-xs text-[#666] lg:hidden">آلبوم:</span>{song.album || "تک‌آهنگ"}</div>
+          <div className="font-bold text-white"><span className="ml-1 text-xs font-normal text-[#666] lg:hidden">استریم:</span>{new Intl.NumberFormat("fa-IR",{notation:"compact",maximumFractionDigits:1}).format(Number(song.plays||0))}</div>
+          <span className={`w-fit rounded-full px-3 py-1.5 text-xs font-bold ${statusInfo[song.status].className}`}>{statusInfo[song.status].label}</span>
+          <div className="relative z-20 flex justify-end gap-1">{!deleted&&<><button onClick={(event)=>{event.stopPropagation();openEdit(song);}} className="flex h-10 w-10 items-center justify-center rounded-lg text-[#aaa] hover:bg-[#303030] hover:text-white" title="ویرایش"><Edit3 className="h-4 w-4"/></button>{song.album_id&&<button onClick={(event)=>{event.stopPropagation();setSongAction({song,mode:"detach"});}} className="flex h-10 w-10 items-center justify-center rounded-lg text-[#aaa] hover:bg-amber-500/15 hover:text-amber-300" title="حذف از آلبوم"><Unlink className="h-4 w-4"/></button>}<button onClick={(event)=>{event.stopPropagation();setSongAction({song,mode:"delete"});}} className="flex h-10 w-10 items-center justify-center rounded-lg text-[#aaa] hover:bg-red-500/15 hover:text-red-400" title="حذف"><Trash2 className="h-4 w-4"/></button></>}</div>
+        </article>;})}</div>
+      </div> : <div className="rounded-2xl border border-[#282828] bg-[#181818] py-20 text-center"><div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#282828]"><Music2 className="h-8 w-8 text-[#777]"/></div><h3 className="text-xl font-black text-white">آهنگی پیدا نشد</h3><p className="mt-2 text-sm text-[#777]">{query?"عبارت جستجو یا فیلتر را تغییر دهید.":"آهنگ جدید را از بخش انتشارها ثبت کنید."}</p></div>}
 
-        {/* Table Body */}
-        <div>
-          {filteredSongs.map((song, index) => (
-            <div
-              key={song.id}
-              onClick={() =>
-                navigateTo("details", { type: "song", id: song.id })
-              }
-              className="relative grid grid-cols-1 lg:grid-cols-12 gap-4 px-6 py-4 hover:bg-[#282828] transition-colors cursor-pointer border-b border-[#282828] last:border-b-0"
-            >
-              {/* Mobile Layout */}
-              <div className="lg:hidden flex items-center gap-4 p-2">
-                <img
-                  src={song.image}
-                  alt={song.title}
-                  className="w-20 h-20 sm:w-16 sm:h-16 rounded-lg object-cover flex-shrink-0"
-                />
-                <div className="flex-1 min-w-0 py-1">
-                  <p className="text-white font-semibold text-base sm:text-sm truncate mb-1">
-                    {song.title}
-                  </p>
-                  <p className="text-[#B3B3B3] text-sm sm:text-xs mb-2">
-                    {song.album}
-                  </p>
-                  <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-                    <span className="text-[#B3B3B3] text-xs">
-                      {song.duration}
-                    </span>
-                    <span className="text-[#B3B3B3] text-xs">
-                      {song.plays} پخش
-                    </span>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <span
-                    className={`text-xs px-2 py-1 rounded-full font-medium ${
-                      song.approvalStatus === "approved"
-                        ? "bg-[#1DB954]/20 text-[#1DB954]"
-                        : song.approvalStatus === "pending"
-                        ? "bg-yellow-500/20 text-yellow-500"
-                        : "bg-red-500/20 text-red-500"
-                    }`}
-                  >
-                    {song.approvalStatus === "approved"
-                      ? "تأیید شده"
-                      : song.approvalStatus === "pending"
-                      ? "در انتظار تأیید"
-                      : "رد شده"}
-                  </span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openModal(song);
-                      }}
-                      className="p-2 text-[#B3B3B3] hover:text-white hover:bg-[#282828] rounded-lg transition-colors min-w-[40px] min-h-[40px] touch-manipulation"
-                      title="ویرایش"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowDeleteConfirm(song.id);
-                      }}
-                      className="p-2 text-[#B3B3B3] hover:text-red-500 hover:bg-[#282828] rounded-lg transition-colors min-w-[40px] min-h-[40px] touch-manipulation"
-                      title="حذف"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Desktop Layout */}
-              <>
-                <div className="hidden lg:flex col-span-1 items-center text-[#B3B3B3]">
-                  {index + 1}
-                </div>
-                <div className="hidden lg:flex col-span-4 items-center gap-3">
-                  <img
-                    src={song.image}
-                    alt={song.title}
-                    className="w-12 h-12 rounded object-cover flex-shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-white font-semibold truncate">
-                      {song.title}
-                    </p>
-                    <p className="text-[#B3B3B3] text-sm">{song.artist}</p>
-                  </div>
-                </div>
-                <div className="hidden lg:flex col-span-2 items-center text-[#B3B3B3]">
-                  {song.album}
-                </div>
-                <div className="hidden lg:flex col-span-1 items-center text-[#B3B3B3]">
-                  {song.duration}
-                </div>
-                <div className="hidden lg:flex col-span-1 items-center text-white font-semibold">
-                  {song.plays}
-                </div>
-                <div className="hidden lg:flex col-span-2 items-center">
-                  <span
-                    className={`text-xs px-3 py-1 rounded-full font-semibold ${
-                      song.approvalStatus === "approved"
-                        ? "bg-[#1DB954]/20 text-[#1DB954]"
-                        : song.approvalStatus === "pending"
-                        ? "bg-yellow-500/20 text-yellow-500"
-                        : "bg-red-500/20 text-red-500"
-                    }`}
-                  >
-                    {song.approvalStatus === "approved"
-                      ? "تأیید شده"
-                      : song.approvalStatus === "pending"
-                      ? "در انتظار"
-                      : "رد شده"}
-                  </span>
-                </div>
-                <div className="hidden lg:flex col-span-1 items-center justify-end gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openModal(song);
-                    }}
-                    className="p-1.5 text-[#B3B3B3] hover:text-white hover:bg-[#282828] rounded transition-colors"
-                    title="ویرایش"
-                  >
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowDeleteConfirm(song.id);
-                    }}
-                    className="p-1.5 text-[#B3B3B3] hover:text-red-500 hover:bg-[#282828] rounded transition-colors"
-                    title="حذف"
-                  >
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              </>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#282828] rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-white text-xl font-bold mb-4">تأیید حذف</h3>
-            <p className="text-[#B3B3B3] mb-6">
-              آیا از حذف این آهنگ اطمینان دارید؟ این عمل قابل بازگشت نیست.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowDeleteConfirm(null)}
-                className="px-4 py-2 bg-[#181818] hover:bg-[#282828] text-white rounded-lg transition-colors"
-              >
-                انصراف
-              </button>
-              <button
-                onClick={() => handleDelete(showDeleteConfirm)}
-                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors"
-              >
-                حذف
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload/Edit Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-[#181818] rounded-xl w-full max-w-4xl my-8 pc-compact">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-[#282828]">
-              <h2 className="text-2xl font-bold text-white">
-                {editingSong ? "ویرایش آهنگ" : "بارگذاری آهنگ جدید"}
-              </h2>
-              <button
-                onClick={closeModal}
-                className="text-[#B3B3B3] hover:text-white transition-colors"
-              >
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-
-            {/* Progress Steps */}
-            <div className="px-6 py-4 border-b border-[#282828]">
-              <style>{`.steps-container::-webkit-scrollbar { display: none; } .steps-container { scrollbar-width: none; }`}</style>
-              <div className="flex items-center justify-between max-w-2xl mx-auto overflow-x-auto steps-container">
-                {[
-                  { num: 1, label: "اطلاعات اصلی" },
-                  { num: 2, label: "متادیتا و ژانر" },
-                  { num: 3, label: "ویژگی‌های صوتی" },
-                  { num: 4, label: "اطلاعات قانونی" },
-                ].map((step, idx) => (
-                  <div
-                    key={step.num}
-                    className="flex items-center"
-                    ref={(el) => {
-                      stepsRef.current[idx] = el;
-                    }}
-                  >
-                    <div className="flex flex-col items-center">
-                      <div
-                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-colors ${
-                          modalStep >= step.num
-                            ? "bg-[#1DB954] text-black"
-                            : "bg-[#282828] text-[#B3B3B3]"
-                        }`}
-                      >
-                        {step.num}
-                      </div>
-                      <span className="text-xs text-[#B3B3B3] mt-2 hidden sm:block">
-                        {step.label}
-                      </span>
-                    </div>
-                    {idx < 3 && (
-                      <div
-                        className={`w-12 sm:w-20 h-1 mx-2 transition-colors ${
-                          modalStep > step.num ? "bg-[#1DB954]" : "bg-[#282828]"
-                        }`}
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6 max-h-[60vh] overflow-y-auto" dir="rtl">
-              {/* Step 1: Basic Information */}
-              {modalStep === 1 && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-white font-semibold mb-2">
-                        عنوان آهنگ *
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.title || ""}
-                        onChange={(e) =>
-                          handleInputChange("title", e.target.value)
-                        }
-                        className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                        placeholder="نام آهنگ را وارد کنید"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex flex-row-reverse justify-end items-center gap-2 mb-2">
-                        <button
-                          onClick={() => setIsSingleRelease(!isSingleRelease)}
-                          className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-                            isSingleRelease
-                              ? "bg-[#1DB954] text-black"
-                              : "bg-[#282828] text-[#B3B3B3] hover:bg-[#404040]"
-                          }`}
-                        >
-                          انتشار تک
-                        </button>
-                        <label className="block text-white font-semibold">
-                          نام آلبوم *
-                        </label>
-                      </div>
-                      <input
-                        type="text"
-                        value={formData.album || ""}
-                        onChange={(e) =>
-                          handleInputChange("album", e.target.value)
-                        }
-                        disabled={isSingleRelease}
-                        className={`w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954] ${
-                          isSingleRelease ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
-                        placeholder="نام آلبوم"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      هنرمندان مهمان (با کاما جدا کنید)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.featuredArtists?.join(", ") || ""}
-                      onChange={(e) =>
-                        handleArrayInput("featuredArtists", e.target.value)
-                      }
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="نام هنرمندان مهمان"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-white font-semibold mb-2">
-                        تاریخ انتشار *
-                      </label>
-                      <input
-                        type="date"
-                        value={formData.releaseDate || ""}
-                        onChange={(e) =>
-                          handleInputChange("releaseDate", e.target.value)
-                        }
-                        className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-white font-semibold mb-2">
-                        زبان *
-                      </label>
-                      <select
-                        value={formData.language || "fa"}
-                        onChange={(e) =>
-                          handleInputChange("language", e.target.value)
-                        }
-                        className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      >
-                        <option value="fa">فارسی</option>
-                        <option value="en">انگلیسی</option>
-                        <option value="ar">عربی</option>
-                        <option value="tr">ترکی</option>
-                        <option value="other">سایر</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      فایل صوتی *
-                    </label>
-                    <div className="border-2 border-dashed border-[#404040] rounded-lg p-8 text-center hover:border-[#1DB954] transition-colors cursor-pointer">
-                      <svg
-                        className="w-12 h-12 text-[#B3B3B3] mx-auto mb-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                        />
-                      </svg>
-                      <p className="text-white font-semibold mb-1">
-                        فایل صوتی را اینجا بکشید یا کلیک کنید
-                      </p>
-                      <p className="text-[#B3B3B3] text-sm">
-                        فرمت‌های پشتیبانی شده: MP3, WAV, FLAC (حداکثر 200MB)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      تصویر کاور
-                    </label>
-                    <div className="border-2 border-dashed border-[#404040] rounded-lg p-8 text-center hover:border-[#1DB954] transition-colors cursor-pointer">
-                      <svg
-                        className="w-12 h-12 text-[#B3B3B3] mx-auto mb-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                        />
-                      </svg>
-                      <p className="text-white font-semibold mb-1">
-                        تصویر کاور را آپلود کنید
-                      </p>
-                      <p className="text-[#B3B3B3] text-sm">
-                        حداقل 3000x3000 پیکسل، فرمت JPG یا PNG
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="explicit"
-                      checked={formData.explicit || false}
-                      onChange={(e) =>
-                        handleInputChange("explicit", e.target.checked)
-                      }
-                      className="w-5 h-5 rounded bg-[#282828] border-[#404040] text-[#1DB954] focus:ring-[#1DB954]"
-                    />
-                    <label
-                      htmlFor="explicit"
-                      className="text-white font-semibold"
-                    >
-                      این آهنگ دارای محتوای صریح است
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Step 2: Metadata & Genre */}
-              {modalStep === 2 && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      ژانر اصلی * (حداقل یک مورد)
-                    </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                      {genres.map((genre) => (
-                        <button
-                          key={genre}
-                          type="button"
-                          onClick={() => {
-                            const current = formData.genre || [];
-                            if (current.includes(genre)) {
-                              handleInputChange(
-                                "genre",
-                                current.filter((g) => g !== genre)
-                              );
-                            } else {
-                              handleInputChange("genre", [...current, genre]);
-                            }
-                          }}
-                          className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-                            formData.genre?.includes(genre)
-                              ? "bg-[#1DB954] text-black"
-                              : "bg-[#282828] text-[#B3B3B3] hover:bg-[#404040]"
-                          }`}
-                        >
-                          {genre}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      زیرژانر (اختیاری)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.subGenre?.join(", ") || ""}
-                      onChange={(e) =>
-                        handleArrayInput("subGenre", e.target.value)
-                      }
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="زیرژانرها را با کاما جدا کنید"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      حال و هوای آهنگ (Mood) *
-                    </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                      {moods.map((mood) => (
-                        <button
-                          key={mood}
-                          type="button"
-                          onClick={() => {
-                            const current = formData.mood || [];
-                            if (current.includes(mood)) {
-                              handleInputChange(
-                                "mood",
-                                current.filter((m) => m !== mood)
-                              );
-                            } else {
-                              handleInputChange("mood", [...current, mood]);
-                            }
-                          }}
-                          className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-                            formData.mood?.includes(mood)
-                              ? "bg-[#1DB954] text-black"
-                              : "bg-[#282828] text-[#B3B3B3] hover:bg-[#404040]"
-                          }`}
-                        >
-                          {mood}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      تگ‌ها (برای جستجو و کشف آهنگ)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.tags?.join(", ") || ""}
-                      onChange={(e) => handleArrayInput("tags", e.target.value)}
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="تگ‌ها را با کاما جدا کنید"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      توضیحات آهنگ
-                    </label>
-                    <textarea
-                      value={formData.description || ""}
-                      onChange={(e) =>
-                        handleInputChange("description", e.target.value)
-                      }
-                      rows={4}
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="توضیحی درباره آهنگ بنویسید..."
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      متن آهنگ (Lyrics)
-                    </label>
-                    <textarea
-                      value={formData.lyrics || ""}
-                      onChange={(e) =>
-                        handleInputChange("lyrics", e.target.value)
-                      }
-                      rows={6}
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954] font-mono"
-                      placeholder="متن آهنگ را اینجا وارد کنید..."
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Step 3: Audio Features */}
-              {modalStep === 3 && (
-                <div className="space-y-6">
-                  <p className="text-[#B3B3B3] text-sm">
-                    این اطلاعات به الگوریتم‌های پخش و پیشنهاد اسپاتیفای کمک
-                    می‌کند تا آهنگ شما را به مخاطبان مناسب معرفی کند.
-                  </p>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-white font-semibold mb-2">
-                        تمپو (BPM) *
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.tempo || 120}
-                        onChange={(e) =>
-                          handleInputChange("tempo", parseInt(e.target.value))
-                        }
-                        className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                        min="40"
-                        max="240"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Audio Feature Sliders */}
-                  {[
-                    {
-                      key: "liveness",
-                      label: "اجرای زنده",
-                      desc: "احتمال اجرای زنده بودن",
-                    },
-                    {
-                      key: "energy",
-                      label: "انرژی",
-                      desc: "شدت و فعالیت آهنگ",
-                    },
-                    {
-                      key: "valence",
-                      label: "مثبت‌نگری",
-                      desc: "احساس مثبت یا منفی",
-                    },
-                    {
-                      key: "acousticness",
-                      label: "آکوستیک بودن",
-                      desc: "میزان استفاده از آلات آکوستیک",
-                    },
-                    {
-                      key: "instrumentalness",
-                      label: "بی‌کلام بودن",
-                      desc: "میزان بی‌کلام بودن",
-                    },
-                    {
-                      key: "danceability",
-                      label: "قابلیت رقص",
-                      desc: "مناسب بودن برای رقصیدن",
-                    },
-                    {
-                      key: "speechiness",
-                      label: "گفتاری بودن",
-                      desc: "میزان حضور کلام",
-                    },
-                  ].map((feature) => (
-                    <div key={feature.key}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <label className="block text-white font-semibold">
-                            {feature.label}
-                          </label>
-                          <p className="text-[#B3B3B3] text-sm">
-                            {feature.desc}
-                          </p>
-                        </div>
-                        <span className="text-[#1DB954] font-bold text-lg">
-                          {feature.key === "liveness"
-                            ? formData[feature.key as keyof SongMetadata]
-                              ? "بله"
-                              : "خیر"
-                            : `${
-                                formData[feature.key as keyof SongMetadata] || 0
-                              }%`}
-                        </span>
-                      </div>
-                      {feature.key === "liveness" ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            id={`liveness-${feature.key}`}
-                            checked={
-                              (formData[
-                                feature.key as keyof SongMetadata
-                              ] as boolean) || false
-                            }
-                            onChange={(e) =>
-                              handleInputChange("liveness", e.target.checked)
-                            }
-                            className="w-5 h-5 rounded bg-[#282828] border-[#404040] text-[#1DB954] focus:ring-[#1DB954]"
-                          />
-                          <label
-                            htmlFor={`liveness-${feature.key}`}
-                            className="text-white"
-                          >
-                            اجرای زنده
-                          </label>
-                        </div>
-                      ) : (
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={
-                            (formData[
-                              feature.key as keyof SongMetadata
-                            ] as number) || 0
-                          }
-                          onChange={(e) =>
-                            handleInputChange(
-                              feature.key as keyof SongMetadata,
-                              parseInt(e.target.value)
-                            )
-                          }
-                          className="w-full h-2 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#1DB954]"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Step 4: Legal Information */}
-              {modalStep === 4 && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-white font-semibold mb-2">
-                        لیبل/ناشر *
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.label || ""}
-                        onChange={(e) =>
-                          handleInputChange("label", e.target.value)
-                        }
-                        className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                        placeholder="نام لیبل موسیقی"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      تهیه‌کنندگان (با کاما جدا کنید)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.producers?.join(", ") || ""}
-                      onChange={(e) =>
-                        handleArrayInput("producers", e.target.value)
-                      }
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="نام تهیه‌کنندگان"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      آهنگسازان (با کاما جدا کنید)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.composers?.join(", ") || ""}
-                      onChange={(e) =>
-                        handleArrayInput("composers", e.target.value)
-                      }
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="نام آهنگسازان"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      ترانه‌سراها (با کاما جدا کنید)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.lyricists?.join(", ") || ""}
-                      onChange={(e) =>
-                        handleArrayInput("lyricists", e.target.value)
-                      }
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="نام ترانه‌سراها"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">
-                      اعتبارات و تشکرات
-                    </label>
-                    <textarea
-                      value={formData.credits || ""}
-                      onChange={(e) =>
-                        handleInputChange("credits", e.target.value)
-                      }
-                      rows={4}
-                      className="w-full px-4 py-3 bg-[#282828] border border-[#404040] rounded-lg text-white focus:outline-none focus:border-[#1DB954]"
-                      placeholder="اعتبارات کامل و تشکرات..."
-                    />
-                  </div>
-
-                  <div className="bg-[#282828] border border-[#404040] rounded-lg p-4">
-                    <h4 className="text-white font-semibold mb-2 flex items-center gap-2">
-                      <svg
-                        className="w-5 h-5 text-[#1DB954]"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                      نکات مهم
-                    </h4>
-                    <ul className="text-[#B3B3B3] text-sm space-y-1 list-disc list-inside">
-                      <li>
-                        اطمینان حاصل کنید تمامی حقوق مالکیت معنوی را دارید
-                      </li>
-                      <li>اعتبارات کامل به شناسایی بهتر همکاران کمک می‌کند</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex flex-col sm:flex-row items-center justify-between p-4 md:p-6 border-t border-[#282828] gap-3 sm:gap-0">
-              <div className="flex gap-2 w-full sm:w-auto">
-                {modalStep > 1 && (
-                  <button
-                    onClick={() => setModalStep(modalStep - 1)}
-                    className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-[#282828] hover:bg-[#404040] text-white font-semibold rounded-lg transition-colors text-sm md:text-base"
-                  >
-                    قبلی
-                  </button>
-                )}
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto">
-                <button
-                  onClick={closeModal}
-                  className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-[#282828] hover:bg-[#404040] text-white font-semibold rounded-lg transition-colors text-sm md:text-base"
-                >
-                  انصراف
-                </button>
-                {modalStep < 4 ? (
-                  <button
-                    onClick={() => setModalStep(modalStep + 1)}
-                    className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold rounded-lg transition-colors text-sm md:text-base"
-                  >
-                    بعدی
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSubmit}
-                    className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold rounded-lg transition-colors flex items-center justify-center gap-2 text-sm md:text-base"
-                  >
-                    <svg
-                      className="w-4 h-4 md:w-5 md:h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    {editingSong ? "ذخیره تغییرات" : "بارگذاری آهنگ"}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Empty State */}
-      {filteredSongs.length === 0 && (
-        <div className="bg-[#181818] border border-[#282828] rounded-xl p-12 text-center mt-6">
-          <div className="w-20 h-20 bg-[#282828] rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg
-              className="w-10 h-10 text-[#B3B3B3]"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
-            </svg>
-          </div>
-          <h3 className="text-white font-bold text-xl mb-2">
-            {activeTab === "all" && "هنوز آهنگی ندارید"}
-            {activeTab === "published" && "هنوز آهنگ منتشر شده‌ای ندارید"}
-            {activeTab === "pending" && "آهنگی در انتظار تأیید نیست"}
-          </h3>
-          <p className="text-[#B3B3B3] mb-6">
-            {activeTab === "all" && "اولین آهنگ خود را بارگذاری کنید"}
-            {activeTab === "published" &&
-              "آهنگ‌های تأیید شده اینجا نمایش داده می‌شوند"}
-            {activeTab === "pending" &&
-              "آهنگ‌های در انتظار تأیید اینجا نمایش داده می‌شوند"}
-          </p>
-          <button
-            onClick={() => openModal()}
-            className="px-6 py-3 bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold rounded-lg transition-all duration-200"
-          >
-            بارگذاری آهنگ
-          </button>
-        </div>
-      )}
+      <SongModal isOpen={modalOpen} onClose={()=>{if(!submitting && !pendingReviewSave){setModalOpen(false);setEditing(null);}}} onSubmit={submitSong} initialData={editing} initialIsSingle={editing?.is_single ?? true} isSubmitting={submitting} />
+      <ConfirmModal
+        open={Boolean(pendingReviewSave)}
+        title="ارسال دوباره برای بررسی"
+        description="با ذخیره این تغییرات، آهنگ و انتشار مرتبط دوباره در انتظار تأیید قرار می‌گیرند. آیا ادامه می‌دهید؟"
+        confirmLabel="ذخیره و ارسال برای بررسی"
+        cancelLabel="بازگشت به ویرایش"
+        loading={submitting}
+        onCancel={() => !submitting && setPendingReviewSave(null)}
+        onConfirm={() => pendingReviewSave ? submitSong(pendingReviewSave, true) : undefined}
+      />
+      <ConfirmModal open={Boolean(songAction)} title={songAction?.mode==="detach"?"حذف آهنگ از آلبوم":"حذف کامل آهنگ"} description={songAction?.mode==="detach"?`آهنگ فقط از آلبوم جدا و به‌صورت تک‌آهنگ حفظ می‌شود.${actionIsLastAlbumTrack?" این آخرین آهنگ فعال آلبوم است و با جداسازی آن، آلبوم نیز حذف خواهد شد.":""}`:`اگر آهنگ منتشر شده یا دارای آمار مالی باشد، فقط غیرفعال می‌شود و شناسه، پخش‌ها و درآمد آن محفوظ می‌ماند؛ آهنگ منتشرنشده بدون سابقه به‌صورت کامل حذف می‌شود.${actionIsLastAlbumTrack?" این آخرین آهنگ فعال آلبوم است و با حذف آن، آلبوم نیز حذف خواهد شد.":""}`} confirmLabel={songAction?.mode==="detach"?"حذف از آلبوم":"حذف آهنگ"} cancelLabel="انصراف" tone="danger" loading={submitting} onCancel={()=>!submitting&&setSongAction(null)} onConfirm={()=>void confirmSongAction()} />
+      {submitting && songAction && <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-[#1DB954]"/></div>}
     </div>
   );
 };

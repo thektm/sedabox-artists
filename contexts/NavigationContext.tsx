@@ -25,7 +25,7 @@ const NavigationContext = createContext<NavigationContextType | undefined>(
 export const useNavigation = () => {
   const context = useContext(NavigationContext);
   if (!context) {
-    throw new Error("useNavigation must be used within a NavigationProvider");
+    throw new Error("هوک مسیریابی باید داخل فراهم‌کننده مسیریابی استفاده شود.");
   }
   return context;
 };

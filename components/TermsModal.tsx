@@ -77,7 +77,7 @@ const TermsModal: React.FC<Props> = ({ open, onClose, onConfirm }) => {
                 خلاف آن به صورت مکتوب توافق شده باشد) برای:
                 <ul className="list-disc list-inside mr-6 mt-1 space-y-1 opacity-80">
                   <li>انتشار</li>
-                  <li>پخش آنلاین (Streaming)</li>
+                  <li>پخش آنلاین</li>
                   <li>نمایش اطلاعات اثر و هنرمند</li>
                 </ul>
                 در وب سایت، اپلیکیشن و سرویس‌های وابسته پلتفرم اعطا می کنید.
@@ -110,7 +110,7 @@ const TermsModal: React.FC<Props> = ({ open, onClose, onConfirm }) => {
             </h3>
             <ul className="list-disc list-inside space-y-2 pr-4">
               <li>
-                سهم درآمد شما از پخش آنلاین (Streaming) آثار مطابق با مدل درآمدی
+                سهم درآمد شما از پخش آنلاین آثار مطابق با مدل درآمدی
                 اعلام شده در پلتفرم محاسبه می‌شود.
               </li>
               <li>

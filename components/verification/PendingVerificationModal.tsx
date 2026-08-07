@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Clock, CheckCircle2, Mail } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -11,7 +11,8 @@ const PendingVerificationModal: React.FC<PendingVerificationModalProps> = ({
   verificationType,
   artistName,
 }) => {
-  const { devAcceptVerification } = useAuth();
+  const { devAcceptVerification, recheckVerification } = useAuth();
+  const [isRechecking, setIsRechecking] = useState(false);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4 bg-black/90 backdrop-blur-md"
@@ -30,7 +31,7 @@ const PendingVerificationModal: React.FC<PendingVerificationModalProps> = ({
             <p className="text-white/90 text-sm md:text-base font-medium">
               {verificationType === "new"
                 ? "اطلاعات هنری شما در حال بررسی است"
-                : `درخواست احراز مالکیت برای "${artistName}" دریافت شد`}
+                : `درخواست احراز مالکیت شما دریافت شده است`}
             </p>
           </div>
         </div>
@@ -108,20 +109,31 @@ const PendingVerificationModal: React.FC<PendingVerificationModalProps> = ({
         <div className="flex flex-col sm:flex-row items-center justify-between p-4 md:p-6 border-t border-[#282828] gap-3 sm:gap-0">
           <div className="flex gap-2 w-full sm:w-auto">
             <button
-              onClick={() => {
-                // Handle recheck logic here
-                console.log("Recheck verification");
+              onClick={async () => {
+                setIsRechecking(true);
+                try {
+                  const status = await recheckVerification();
+                  // If server now marks user approved, reload to ensure all app state reflects it
+                  if (status === "approved") {
+                    window.location.reload();
+                  }
+                } catch (err) {
+                  console.error(err);
+                } finally {
+                  setIsRechecking(false);
+                }
               }}
-              className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-[#282828] hover:bg-[#404040] text-white font-semibold rounded-lg transition-colors text-sm md:text-base"
+              disabled={isRechecking}
+              className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-[#282828] hover:bg-[#404040] text-white font-semibold rounded-lg transition-colors text-sm md:text-base disabled:opacity-60"
             >
-              بررسی مجدد
+              {isRechecking ? "در حال بررسی..." : "بررسی مجدد"}
             </button>
           </div>
           <div className="flex gap-2 w-full sm:w-auto">
             <button
               onClick={() => {
                 // Handle logout logic here
-                console.log("Logout");
+                console.log("خروج از حساب");
               }}
               className="flex-1 sm:flex-none px-4 py-2 md:px-6 md:py-3 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-lg transition-colors text-sm md:text-base"
             >
@@ -132,12 +144,6 @@ const PendingVerificationModal: React.FC<PendingVerificationModalProps> = ({
       </div>
 
       {/* Dev Floating Button */}
-      <button
-        onClick={devAcceptVerification}
-        className="absolute top-4 right-4 bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-lg transition-colors z-60"
-      >
-        DEV : ACCEPTED BY ADMIN
-      </button>
 
       <style jsx>{`
         @keyframes slideUp {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { useNavigation } from "../contexts/NavigationContext";
 import { useAuth } from "../contexts/AuthContext";
 import Home from "./Home";
@@ -8,6 +8,8 @@ import Verify from "./Verify";
 import ForgotPassword from "./ForgotPassword";
 import Songs from "./Songs";
 import Albums from "./Albums";
+import Releases from "./Releases";
+import ReleaseComposer from "./ReleaseComposer";
 import Analytics from "./Analytics";
 import Financial from "./Financial";
 import Settings from "./Settings";
@@ -44,25 +46,6 @@ const AppRouter: React.FC = () => {
     }
   }, [activePage, currentPage, currentParams, navigateTo]);
 
-  // Keep track of visited pages to lazy load them
-  const [visitedPages, setVisitedPages] = useState<Set<string>>(new Set());
-
-  // Keep track of last details params to keep the page alive in background
-  const lastDetailsParams = useRef<any>(null);
-
-  useEffect(() => {
-    setVisitedPages((prev) => {
-      if (prev.has(activePage)) return prev;
-      const newSet = new Set(prev);
-      newSet.add(activePage);
-      return newSet;
-    });
-
-    if (activePage === "details" && currentParams) {
-      lastDetailsParams.current = currentParams;
-    }
-  }, [activePage, currentParams]);
-
   // Show splash screen while determining auth status
   if (isInitializing) {
     return <SplashScreen />;
@@ -84,19 +67,15 @@ const AppRouter: React.FC = () => {
     }
   }
 
+  // Always unmount inactive pages so they remount from scratch on navigation
   const renderPageContainer = (pageId: string, content: React.ReactNode) => {
-    // If the page has never been visited and is not current, don't render it yet
-    if (!visitedPages.has(pageId) && activePage !== pageId) {
-      return null;
-    }
-
-    const isActive = activePage === pageId;
+    if (activePage !== pageId) return null;
 
     return (
       <div
         key={pageId}
         style={{
-          display: isActive ? "block" : "none",
+          display: "block",
           height: "100%",
           width: "100%",
           overflowY: "auto",
@@ -109,19 +88,17 @@ const AppRouter: React.FC = () => {
   };
 
   const getDetailsContent = () => {
-    const params =
-      activePage === "details" ? currentParams : lastDetailsParams.current;
-    if (!params) return null;
-
+    if (activePage !== "details" || !currentParams) return null;
+    const params = currentParams;
     if (params.type === "song") {
-      return <SongDetail songId={params.id} />;
+      return <SongDetail key={`song-${params.id}-${params.edit ? "edit" : "view"}`} songId={params.id} initialEdit={Boolean(params.edit)} />;
     }
     if (params.type === "album") {
-      return <AlbumDetail albumId={params.id} />;
+      return <AlbumDetail albumId={params.id} initialEdit={params.edit} />;
     }
     return (
       <div>
-        Details Screen for {params.type} id: {params.id}
+        صفحه جزئیات {params.type} شناسه: {params.id}
       </div>
     );
   };
@@ -131,17 +108,22 @@ const AppRouter: React.FC = () => {
       <AppShell>
         {renderPageContainer("home", <Home />)}
         {renderPageContainer("songs", <Songs />)}
+        {renderPageContainer("releases", <Releases />)}
+        {renderPageContainer(
+          "release-composer",
+          currentParams?.id ? <ReleaseComposer key={`release-${currentParams.id}-${currentParams.trackId || "root"}`} releaseId={String(currentParams.id)} focusTrackId={currentParams.trackId ? Number(currentParams.trackId) : undefined} /> : <Releases />,
+        )}
         {renderPageContainer("albums", <Albums />)}
         {renderPageContainer("analytics", <Analytics />)}
         {renderPageContainer("financial", <Financial />)}
         {renderPageContainer("settings", <Settings />)}
         {renderPageContainer("terms", <TermsAndConditions />)}
-        {renderPageContainer("search", <div>Search Screen</div>)}
-        {renderPageContainer("playlists", <div>Playlists Screen</div>)}
-        {renderPageContainer("profile", <div>Profile Screen</div>)}
+        {renderPageContainer("search", <div>صفحه جست‌وجو</div>)}
+        {renderPageContainer("playlists", <div>صفحه فهرست‌های پخش</div>)}
+        {renderPageContainer("profile", <div>صفحه پروفایل</div>)}
         {renderPageContainer("details", getDetailsContent())}
-        {renderPageContainer("lists", <div>Lists Screen</div>)}
-        {renderPageContainer("payments", <div>Payments Screen</div>)}
+        {renderPageContainer("lists", <div>صفحه فهرست‌ها</div>)}
+        {renderPageContainer("payments", <div>صفحه پرداخت‌ها</div>)}
       </AppShell>
 
       {/* Artist Verification Modal - Non-skippable for first-time users */}

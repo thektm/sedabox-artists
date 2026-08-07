@@ -1,132 +1,232 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigation } from "../contexts/NavigationContext";
-import { Eye, EyeOff } from "lucide-react";
+import { useToast } from "../contexts/ToastContext";
+import { toPersianMessage } from "../lib/faMessages";
+
+const DEFAULT_RESEND_SECONDS = 60;
 
 const Verify: React.FC = () => {
   const { navigateTo, currentParams } = useNavigation();
-  const { verifyOtp, resetPassword, isLoading, error } = useAuth();
+  const {
+    verifyArtistVerificationOtp,
+    verifyArtistPasswordResetOtp,
+    resetPassword,
+    resendArtistVerificationOtp,
+    resendArtistPasswordResetOtp,
+    isLoading,
+    error,
+    clearError,
+  } = useAuth();
+  const { showToast } = useToast();
+
+  const [flow] = useState<"reset" | "registration">(() => {
+    if (currentParams?.mode === "reset") return "reset";
+    if (currentParams?.mode === "registration") return "registration";
+    if (typeof window !== "undefined") {
+      const resetPhone = sessionStorage.getItem("sedabox_artist_reset_phone");
+      const verificationPhone = sessionStorage.getItem("sedabox_artist_verify_phone");
+      if (resetPhone && !verificationPhone) return "reset";
+    }
+    return "registration";
+  });
+  const isResetMode = flow === "reset";
+  const [phone, setPhone] = useState<string | null>(() => {
+    if (currentParams?.phone) return currentParams.phone;
+    if (typeof window === "undefined") return null;
+    return sessionStorage.getItem(
+      flow === "reset"
+        ? "sedabox_artist_reset_phone"
+        : "sedabox_artist_verify_phone",
+    );
+  });
   const [otp, setOtp] = useState("");
-  const [timeLeft, setTimeLeft] = useState(300); // 5 minutes
-  const [canResend, setCanResend] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number>(
+    Number(currentParams?.resendAfterSeconds) || DEFAULT_RESEND_SECONDS,
+  );
   const [localError, setLocalError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
-
-  // Password reset state
   const [isPasswordStep, setIsPasswordStep] = useState(false);
+  const [resetToken, setResetToken] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
   const newPasswordInputRef = useRef<HTMLInputElement>(null);
 
-  const isResetMode = currentParams?.mode === "reset";
-  const phone = currentParams?.phone;
+  const canResend = timeLeft <= 0;
 
-  // Countdown timer
   useEffect(() => {
-    if (timeLeft <= 0) {
-      setCanResend(true);
-      return;
+    clearError();
+    let resolvedPhone = currentParams?.phone || null;
+    if (!resolvedPhone && typeof window !== "undefined") {
+      resolvedPhone = sessionStorage.getItem(
+        isResetMode
+          ? "sedabox_artist_reset_phone"
+          : "sedabox_artist_verify_phone",
+      );
+    }
+    if (resolvedPhone) {
+      setPhone(resolvedPhone);
     }
 
-    const timer = setTimeout(() => {
-      setTimeLeft(timeLeft - 1);
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [timeLeft]);
-
-  // Auto-focus password input when switching steps
-  useEffect(() => {
-    if (isPasswordStep && newPasswordInputRef.current) {
-      newPasswordInputRef.current.focus();
+    if (isResetMode && typeof window !== "undefined") {
+      const savedToken = sessionStorage.getItem("sedabox_artist_reset_token");
+      if (savedToken) {
+        setResetToken(savedToken);
+        setIsPasswordStep(true);
+      }
     }
+  }, [currentParams?.phone, isResetMode]);
+
+  useEffect(() => {
+    if (timeLeft <= 0 || isPasswordStep) return;
+    const timer = window.setTimeout(
+      () => setTimeLeft((seconds) => Math.max(0, seconds - 1)),
+      1000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [timeLeft, isPasswordStep]);
+
+  useEffect(() => {
+    if (isPasswordStep) newPasswordInputRef.current?.focus();
   }, [isPasswordStep]);
+
+  const reportError = (message: string) => {
+    const localizedMessage = toPersianMessage(message, "انجام عملیات تأیید ممکن نشد.");
+    setLocalError(localizedMessage);
+    setSuccessMessage("");
+    showToast(localizedMessage, "error");
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`.replace(/\d/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]);
   };
 
   const handleOtpChange = (value: string) => {
-    // Only allow digits and max 4 characters
-    const digitsOnly = value.replace(/\D/g, "").slice(0, 4);
-    setOtp(digitsOnly);
+    setOtp(value.replace(/\D/g, "").slice(0, 4));
   };
 
   const handleOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    clearError();
     setLocalError(null);
     setSuccessMessage("");
 
+    if (!phone) {
+      reportError("شماره تلفن در دسترس نیست. فرایند را از ابتدا شروع کنید.");
+      return;
+    }
     if (otp.length !== 4) {
-      setLocalError("کد تأیید باید 4 رقم باشد");
+      reportError("کد تأیید چهاررقمی را کامل وارد کنید.");
       return;
     }
 
     try {
-      await verifyOtp(otp);
-
+      const result = isResetMode
+        ? await verifyArtistPasswordResetOtp(phone, otp)
+        : await verifyArtistVerificationOtp(phone, otp);
       if (isResetMode) {
-        setSuccessMessage(
-          "کد تأیید صحیح است. لطفاً رمز عبور جدید را وارد کنید."
-        );
+        const token = result?.resetToken;
+        if (!token) throw new Error("سرور توکن بازنشانی رمز عبور را برنگرداند.");
+        setResetToken(token);
+        setSuccessMessage("کد تأیید شد. رمز عبور جدید هنرمند را وارد کنید.");
+        showToast("کد با موفقیت تأیید شد.", "success");
         setIsPasswordStep(true);
       } else {
-        setSuccessMessage("تأیید موفق! درحال هدایت...");
-        setTimeout(() => {
-          navigateTo("home");
-        }, 500);
+        sessionStorage.removeItem("sedabox_artist_verify_phone");
+        setSuccessMessage("تأیید حساب انجام شد؛ در حال انتقال…");
+        showToast("حساب با موفقیت تأیید شد.", "success");
+        navigateTo("home");
       }
-    } catch (err) {
-      setLocalError(error || "کد تأیید نادرست است");
+    } catch (err: any) {
+      reportError(err?.message || "کد تأیید معتبر نیست.");
     }
   };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    clearError();
     setLocalError(null);
     setSuccessMessage("");
 
-    if (!newPassword.trim()) {
-      setLocalError("لطفاً رمز عبور جدید را وارد کنید");
+    if (!phone || !resetToken) {
+      reportError("نشست بازنشانی رمز عبور در دسترس نیست. کد جدیدی درخواست کنید.");
+      setIsPasswordStep(false);
+      setTimeLeft(0);
       return;
     }
-    if (newPassword !== confirmPassword) {
-      setLocalError("رمز عبور و تأیید آن مطابقت ندارد");
+    if (!newPassword) {
+      reportError("رمز عبور جدید را وارد کنید.");
       return;
     }
     if (newPassword.length < 6) {
-      setLocalError("رمز عبور باید حداقل 6 کاراکتر باشد");
+      reportError("رمز عبور باید حداقل ۶ کاراکتر داشته باشد.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      reportError("رمزهای عبور واردشده یکسان نیستند.");
       return;
     }
 
     try {
-      if (phone) {
-        await resetPassword(phone, otp, newPassword);
-        setSuccessMessage(
-          "رمز عبور با موفقیت تغییر کرد. درحال هدایت به صفحه ورود..."
-        );
-        setTimeout(() => {
-          navigateTo("login");
-        }, 1500);
-      } else {
-        setLocalError("شماره تلفن یافت نشد. لطفاً دوباره تلاش کنید.");
+      await resetPassword(phone, resetToken, newPassword);
+      setSuccessMessage("رمز عبور هنرمند با موفقیت تغییر کرد.");
+      showToast("رمز عبور هنرمند با موفقیت تغییر کرد.", "success");
+      navigateTo("login");
+    } catch (err: any) {
+      const code = err?.code;
+      if (
+        code === "ARTIST_RESET_TOKEN_INVALID" ||
+        code === "ARTIST_RESET_TOKEN_EXPIRED" ||
+        code === "ARTIST_RESET_TOKEN_USED"
+      ) {
+        sessionStorage.removeItem("sedabox_artist_reset_token");
+        setResetToken("");
+        setIsPasswordStep(false);
+        setOtp("");
+        setTimeLeft(0);
       }
-    } catch (err) {
-      setLocalError(error || "خطا در تغییر رمز عبور");
+      reportError(err?.message || "بازنشانی رمز عبور هنرمند انجام نشد.");
     }
   };
 
-  const handleResend = () => {
-    setTimeLeft(300);
-    setCanResend(false);
+  const handleResend = async () => {
+    if (!phone || !canResend || isLoading) return;
+    clearError();
     setLocalError(null);
-    setOtp("");
-    setSuccessMessage("کد جدید ارسال شد");
+    setSuccessMessage("");
+
+    try {
+      const result = isResetMode
+        ? await resendArtistPasswordResetOtp(phone)
+        : await resendArtistVerificationOtp(phone);
+      setOtp("");
+      setResetToken("");
+      setIsPasswordStep(false);
+      setTimeLeft(result.resendAfterSeconds ?? DEFAULT_RESEND_SECONDS);
+      setSuccessMessage("کد تأیید جدید ارسال شد.");
+      showToast("کد تأیید جدید ارسال شد.", "success");
+    } catch (err: any) {
+      if (err?.retryAfterSeconds) {
+        setTimeLeft(err.retryAfterSeconds);
+      }
+      reportError(err?.message || "ارسال دوباره کد تأیید انجام نشد.");
+    }
+  };
+
+  const handleBackToLogin = () => {
+    clearError();
+    if (isResetMode) {
+      sessionStorage.removeItem("sedabox_artist_reset_phone");
+      sessionStorage.removeItem("sedabox_artist_reset_token");
+    } else {
+      sessionStorage.removeItem("sedabox_artist_verify_phone");
+    }
+    navigateTo("login");
   };
 
   return (
@@ -134,15 +234,12 @@ const Verify: React.FC = () => {
       className="min-h-screen bg-[#121212] flex items-center justify-center p-4 rtl"
       dir="rtl"
     >
-      {/* Spotify-style background */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#121212] via-[#181818] to-[#121212]"></div>
 
-      {/* Content */}
       <div className="relative z-10 w-full max-w-md">
-        {/* Logo and Header */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-8">
-            <img src="/logo.png" alt="SedaBox" className="h-16 w-auto" />
+            <img src="/logo.png" alt="صداباکس" className="h-16 w-auto" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
             {isPasswordStep ? "تغییر رمز عبور" : "تأیید شماره"}
@@ -154,11 +251,12 @@ const Verify: React.FC = () => {
           </p>
         </div>
 
-        {/* Card */}
-        <div className="bg-[#181818] border border-[#282828] rounded-lg p-8 shadow-2xl">
-          {/* Error Message */}
+        <div className="bg-[#181818] border border-[#282828] rounded-lg p-6 sm:p-8 shadow-2xl">
           {(localError || error) && (
-            <div className="mb-6 p-4 bg-[#450A0A] border border-[#B91C1C] rounded-md flex items-center gap-3">
+            <div
+              className="mb-6 p-4 bg-[#450A0A] border border-[#B91C1C] rounded-md flex items-center gap-3"
+              dir="ltr"
+            >
               <svg
                 className="w-5 h-5 text-[#EF4444] flex-shrink-0"
                 fill="currentColor"
@@ -170,13 +268,17 @@ const Verify: React.FC = () => {
                   clipRule="evenodd"
                 />
               </svg>
-              <p className="text-[#EF4444] text-sm">{localError || error}</p>
+              <p className="text-[#EF4444] text-sm text-left">
+                {localError || error}
+              </p>
             </div>
           )}
 
-          {/* Success Message */}
           {successMessage && (
-            <div className="mb-6 p-4 bg-[#0F5132] border border-[#198754] rounded-md flex items-center gap-3">
+            <div
+              className="mb-6 p-4 bg-[#0F5132] border border-[#198754] rounded-md flex items-center gap-3"
+              dir="ltr"
+            >
               <svg
                 className="w-5 h-5 text-[#22C55E] flex-shrink-0"
                 fill="currentColor"
@@ -188,11 +290,12 @@ const Verify: React.FC = () => {
                   clipRule="evenodd"
                 />
               </svg>
-              <p className="text-[#22C55E] text-sm">{successMessage}</p>
+              <p className="text-[#22C55E] text-sm text-left">
+                {successMessage}
+              </p>
             </div>
           )}
 
-          {/* OTP Form */}
           {!isPasswordStep && (
             <form onSubmit={handleOtpSubmit} className="space-y-6">
               <div>
@@ -204,57 +307,39 @@ const Verify: React.FC = () => {
                     <input
                       key={index}
                       type="text"
+                      inputMode="numeric"
+                      autoComplete={index === 0 ? "one-time-code" : "off"}
                       maxLength={1}
                       value={otp[index] || ""}
                       onChange={(e) => {
-                        const newOtp = otp.split("");
-                        newOtp[index] = e.target.value.replace(/\D/g, "");
-                        handleOtpChange(newOtp.join(""));
-
-                        // Auto-focus next input
-                        if (
-                          e.target.value &&
-                          index < 3 &&
-                          e.currentTarget.nextElementSibling
-                        ) {
-                          (
-                            e.currentTarget
-                              .nextElementSibling as HTMLInputElement
-                          ).focus();
+                        const digit = e.target.value.replace(/\D/g, "");
+                        const next = otp.padEnd(4, " ").split("");
+                        next[index] = digit;
+                        handleOtpChange(next.join("").replace(/ /g, ""));
+                        if (digit && index < 3) {
+                          (e.currentTarget.nextElementSibling as HTMLInputElement | null)?.focus();
                         }
                       }}
                       onKeyDown={(e) => {
-                        if (
-                          e.key === "Backspace" &&
-                          !otp[index] &&
-                          index > 0 &&
-                          e.currentTarget.previousElementSibling
-                        ) {
-                          (
-                            e.currentTarget
-                              .previousElementSibling as HTMLInputElement
-                          ).focus();
+                        if (e.key === "Backspace" && !otp[index] && index > 0) {
+                          (e.currentTarget.previousElementSibling as HTMLInputElement | null)?.focus();
+                        }
+                      }}
+                      onPaste={(e) => {
+                        const pasted = e.clipboardData.getData("text");
+                        if (/\d{4}/.test(pasted.replace(/\D/g, ""))) {
+                          e.preventDefault();
+                          handleOtpChange(pasted);
                         }
                       }}
                       className="w-12 h-14 bg-[#121212] border border-[#282828] rounded-md text-white text-2xl text-center font-bold focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-all duration-200"
                       disabled={isLoading}
+                      aria-label={`Verification code digit ${index + 1}`}
                     />
                   ))}
                 </div>
-
-                {/* Full OTP Input for paste support */}
-                <input
-                  type="text"
-                  value={otp}
-                  onChange={(e) => handleOtpChange(e.target.value)}
-                  placeholder="یا کد را اینجا بچسبانید"
-                  className="w-full px-4 py-3 bg-[#121212] border border-[#282828] rounded-md text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-all duration-200 text-center tracking-widest"
-                  disabled={isLoading}
-                  inputMode="numeric"
-                />
               </div>
 
-              {/* Timer and Resend */}
               <div className="flex flex-col items-center gap-3">
                 {!canResend && (
                   <div className="flex items-center gap-2">
@@ -271,7 +356,7 @@ const Verify: React.FC = () => {
                         d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <span className="text-[#1DB954] font-semibold">
+                    <span className="text-[#1DB954] font-semibold" dir="ltr">
                       {formatTime(timeLeft)}
                     </span>
                   </div>
@@ -279,49 +364,24 @@ const Verify: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleResend}
-                  disabled={!canResend || isLoading}
+                  disabled={!canResend || isLoading || !phone}
                   className={`text-sm font-medium transition-colors ${
-                    canResend
+                    canResend && phone
                       ? "text-[#1DB954] hover:text-[#1ED760]"
                       : "text-[#B3B3B3] cursor-not-allowed"
                   }`}
                 >
-                  {canResend
-                    ? "دوباره ارسال کد"
-                    : "منتظر ماندن برای ارسال مجدد"}
+                  {canResend ? "دوباره ارسال کد" : "منتظر ماندن برای ارسال مجدد"}
                 </button>
               </div>
 
-              {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isLoading || otp.length !== 4}
+                disabled={isLoading || otp.length !== 4 || !phone}
                 className="w-full mt-6 px-4 py-3 bg-[#1DB954] hover:bg-[#1ED760] disabled:bg-[#282828] disabled:text-[#B3B3B3] text-black font-bold rounded-md transition-all duration-200 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
-                  <>
-                    <svg
-                      className="animate-spin h-5 w-5"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    درحال تأیید...
-                  </>
+                  <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                 ) : (
                   "تأیید"
                 )}
@@ -329,7 +389,6 @@ const Verify: React.FC = () => {
             </form>
           )}
 
-          {/* Password Form */}
           {isPasswordStep && (
             <form onSubmit={handlePasswordSubmit} className="space-y-5">
               <div>
@@ -343,20 +402,18 @@ const Verify: React.FC = () => {
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="••••••••"
+                    autoComplete="new-password"
                     className="w-full px-4 py-3 bg-[#121212] border border-[#282828] rounded-md text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-all duration-200"
                     disabled={isLoading}
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
+                    onClick={() => setShowPassword((shown) => !shown)}
                     className="absolute left-3 top-3.5 text-[#B3B3B3] hover:text-white transition-colors"
                     disabled={isLoading}
+                    aria-label={showPassword ? "پنهان کردن رمز عبور" : "نمایش رمز عبور"}
                   >
-                    {showPassword ? (
-                      <EyeOff className="w-5 h-5" />
-                    ) : (
-                      <Eye className="w-5 h-5" />
-                    )}
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
               </div>
@@ -371,20 +428,18 @@ const Verify: React.FC = () => {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
+                    autoComplete="new-password"
                     className="w-full px-4 py-3 bg-[#121212] border border-[#282828] rounded-md text-white placeholder-[#B3B3B3] focus:outline-none focus:border-[#1DB954] focus:ring-1 focus:ring-[#1DB954] transition-all duration-200"
                     disabled={isLoading}
                   />
                   <button
                     type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    onClick={() => setShowConfirmPassword((shown) => !shown)}
                     className="absolute left-3 top-3.5 text-[#B3B3B3] hover:text-white transition-colors"
                     disabled={isLoading}
+                    aria-label={showConfirmPassword ? "پنهان کردن رمز عبور" : "نمایش رمز عبور"}
                   >
-                    {showConfirmPassword ? (
-                      <EyeOff className="w-5 h-5" />
-                    ) : (
-                      <Eye className="w-5 h-5" />
-                    )}
+                    {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
               </div>
@@ -395,29 +450,7 @@ const Verify: React.FC = () => {
                 className="w-full mt-8 px-4 py-3 bg-[#1DB954] hover:bg-[#1ED760] disabled:bg-[#282828] disabled:text-[#B3B3B3] text-black font-bold rounded-md transition-all duration-200 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
-                  <>
-                    <svg
-                      className="animate-spin h-5 w-5"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    درحال ذخیره...
-                  </>
+                  <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                 ) : (
                   "تغییر رمز عبور"
                 )}
@@ -425,10 +458,9 @@ const Verify: React.FC = () => {
             </form>
           )}
 
-          {/* Back Link */}
           <div className="mt-6 text-center">
             <button
-              onClick={() => navigateTo("login")}
+              onClick={handleBackToLogin}
               className="text-[#B3B3B3] hover:text-white text-sm transition-colors"
             >
               برگشت به ورود
@@ -436,7 +468,6 @@ const Verify: React.FC = () => {
           </div>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-[#B3B3B3] text-xs mt-8">
           {isPasswordStep
             ? "اگر مشکلی دارید با پشتیبانی تماس بگیرید"

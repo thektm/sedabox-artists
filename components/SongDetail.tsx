@@ -1,329 +1,467 @@
-import React, { useMemo, useState, useRef, useEffect } from "react";
-import { useNavigation } from "../contexts/NavigationContext";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactECharts from "echarts-for-react";
+import * as echarts from "echarts";
 import {
-  ArrowRight,
-  Play,
+  ArrowLeft,
+  Clock,
+  Edit3,
   Heart,
   ListPlus,
-  Share2,
-  Clock,
+  Loader2,
+  MapPin,
   Music2,
-  ArrowLeft,
+  Play,
+  RefreshCw,
+  Share2,
 } from "lucide-react";
+import { useNavigation } from "../contexts/NavigationContext";
+import { useToast } from "../contexts/ToastContext";
+import { apiRequest, getApiErrorMessage, resolveMediaUrl } from "../lib/api";
+import SongModal from "./SongModal";
+import ConfirmModal from "./ConfirmModal";
+import { ArtistOption, PartialSong, SongStatus } from "./types";
 
 interface SongDetailProps {
   songId?: string | number;
+  initialEdit?: boolean;
 }
 
-const SongDetail: React.FC<SongDetailProps> = ({ songId }) => {
-  const { goBack, navigateTo } = useNavigation();
-  const [activeTimeRange, setActiveTimeRange] = useState("30 روز");
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+interface DailyPlay {
+  date: string;
+  count: number;
+}
+
+interface LocationRow {
+  city?: string | null;
+  country?: string | null;
+  count: number;
+  percentage: number;
+}
+
+interface TaxonomyValue {
+  id: number;
+  title: string;
+}
+
+interface SongApi {
+  id: number;
+  title: string;
+  title_fa?: string;
+  title_en?: string;
+  artist_name?: string;
+  cover_image?: string;
+  plays?: number;
+  likes_count?: number;
+  added_to_playlists_count?: number;
+  duration_display?: string;
+  release_date?: string | null;
+  status?: SongStatus;
+  featured_artists?: ArtistOption[];
+  album_title?: string | null;
+  duration_seconds?: number;
+  audio_file?: string;
+  stream_url?: string;
+  genre_ids?: TaxonomyValue[];
+  sub_genre_ids?: TaxonomyValue[];
+  mood_ids?: TaxonomyValue[];
+  tag_ids?: TaxonomyValue[];
+  language?: string;
+  tempo?: number;
+  energy?: number;
+  danceability?: number;
+  valence?: number;
+  acousticness?: number;
+  instrumentalness?: number;
+  live_performed?: boolean;
+  speechiness?: number;
+  label?: string;
+  label_en?: string;
+  producers?: string[];
+  producers_en?: string[];
+  composers?: string[];
+  composers_en?: string[];
+  lyricists?: string[];
+  lyricists_en?: string[];
+  lyrics?: string;
+  lyrics_en?: string;
+  description?: string;
+  description_en?: string;
+  credits?: string;
+  credits_en?: string;
+  is_single?: boolean;
+  requires_reapproval?: boolean;
+  linked_release_statuses?: string[];
+  analytics?: {
+    days: number;
+    total_period_plays: number;
+    daily_plays: DailyPlay[];
+    city_distribution: LocationRow[];
+    country_distribution: LocationRow[];
+  };
+}
+
+const ranges = [
+  { label: "۷ روز", days: 7 },
+  { label: "۳۰ روز", days: 30 },
+  { label: "۹۰ روز", days: 90 },
+];
+
+const statusMeta: Record<string, { label: string; className: string }> = {
+  published: { label: "منتشر شده", className: "border-[#1DB954]/25 bg-[#1DB954]/10 text-[#1DB954]" },
+  approved: { label: "تأیید شده", className: "border-blue-400/25 bg-blue-400/10 text-blue-300" },
+  pending: { label: "در انتظار تأیید", className: "border-amber-400/25 bg-amber-400/10 text-amber-300" },
+  rejected: { label: "رد شده", className: "border-red-400/25 bg-red-400/10 text-red-300" },
+  draft: { label: "پیش‌نویس", className: "border-zinc-400/25 bg-zinc-400/10 text-zinc-300" },
+  deleted: { label: "حذف‌شده", className: "border-zinc-500/25 bg-zinc-500/10 text-zinc-400" },
+};
+
+const numberFormatter = new Intl.NumberFormat("fa-IR");
+const audienceBaseUrl = (process.env.NEXT_PUBLIC_AUDIENCE_BASE_URL || "https://sedabox.com").replace(/\/$/, "");
+
+const formatDate = (value?: string | null, short = false) => {
+  if (!value) return "نامشخص";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    month: short ? "short" : "long",
+    day: "numeric",
+    ...(short ? {} : { year: "numeric" }),
+  }).format(date);
+};
+
+
+const toEditorSong = (song: SongApi): PartialSong => {
+  const featured = song.featured_artists || [];
+  const status = song.status || "draft";
+  return {
+    id: song.id,
+    title: song.title_fa ?? song.title ?? "",
+    title_fa: song.title_fa ?? song.title ?? "",
+    title_en: song.title_en || "",
+    artist: song.artist_name || "",
+    featuredArtists: featured,
+    featured_artists: featured,
+    featured_artist_ids: featured.map((artist) => artist.id),
+    album: song.album_title || "",
+    duration: song.duration_display || (song.duration_seconds ? `${Math.floor(song.duration_seconds / 60)}:${String(song.duration_seconds % 60).padStart(2, "0")}` : "0:00"),
+    plays: String(song.plays || 0),
+    status,
+    approvalStatus: status === "published" || status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "pending" ? "pending" : "none",
+    image: resolveMediaUrl(song.cover_image || ""),
+    audioFile: song.audio_file || song.stream_url,
+    releaseDate: song.release_date || "",
+    release_date: song.release_date || "",
+    genre: (song.genre_ids || []).map((item) => item.title),
+    subGenre: (song.sub_genre_ids || []).map((item) => item.title),
+    mood: (song.mood_ids || []).map((item) => item.title),
+    tags: (song.tag_ids || []).map((item) => item.title),
+    genre_ids: (song.genre_ids || []).map((item) => item.id),
+    sub_genre_ids: (song.sub_genre_ids || []).map((item) => item.id),
+    mood_ids: (song.mood_ids || []).map((item) => item.id),
+    tag_ids: (song.tag_ids || []).map((item) => item.id),
+    language: song.language || "fa",
+    tempo: song.tempo ?? 120,
+    energy: song.energy ?? 50,
+    danceability: song.danceability ?? 50,
+    valence: song.valence ?? 50,
+    acousticness: song.acousticness ?? 0,
+    instrumentalness: song.instrumentalness ?? 0,
+    liveness: Boolean(song.live_performed),
+    live_performed: Boolean(song.live_performed),
+    speechiness: song.speechiness ?? 0,
+    label: song.label || "",
+    label_en: song.label_en || "",
+    producers: song.producers || [],
+    producers_en: song.producers_en || [],
+    composers: song.composers || [],
+    composers_en: song.composers_en || [],
+    lyricists: song.lyricists || [],
+    lyricists_en: song.lyricists_en || [],
+    lyrics: song.lyrics || "",
+    lyrics_en: song.lyrics_en || "",
+    description: song.description || "",
+    description_en: song.description_en || "",
+    credits: song.credits || "",
+    credits_en: song.credits_en || "",
+    is_single: Boolean(song.is_single),
+    requires_reapproval: Boolean(song.requires_reapproval),
+    linked_release_statuses: song.linked_release_statuses || [],
+  };
+};
+
+const appendArray = (form: FormData, key: string, values: unknown[] | undefined) => {
+  if (values?.length) values.forEach((value) => form.append(key, String(value)));
+  else form.append(key, "");
+};
+
+const buildSongPayload = (data: PartialSong) => {
+  const payload = new FormData();
+  const scalarFields: Array<keyof PartialSong> = [
+    "title", "title_en", "release_date", "language", "description", "description_en", "lyrics", "lyrics_en",
+    "tempo", "energy", "danceability", "valence", "acousticness", "instrumentalness", "speechiness",
+    "label", "label_en", "credits", "credits_en",
+  ];
+  scalarFields.forEach((field) => {
+    const value = data[field];
+    if (value !== undefined && value !== null) payload.append(String(field), String(value));
+  });
+  payload.set("release_date", String(data.release_date || data.releaseDate || ""));
+  payload.set("is_single", String(Boolean(data.is_single)));
+  payload.set("live_performed", String(Boolean(data.live_performed ?? data.liveness)));
+
+  appendArray(payload, "genre_ids", data.genre_ids);
+  appendArray(payload, "sub_genre_ids", data.sub_genre_ids);
+  appendArray(payload, "mood_ids", data.mood_ids);
+  appendArray(payload, "tag_ids", data.tag_ids);
+  appendArray(payload, "featured_artist_ids", data.featured_artist_ids);
+  appendArray(payload, "producers", data.producers);
+  appendArray(payload, "producers_en", data.producers_en);
+  appendArray(payload, "composers", data.composers);
+  appendArray(payload, "composers_en", data.composers_en);
+  appendArray(payload, "lyricists", data.lyricists);
+  appendArray(payload, "lyricists_en", data.lyricists_en);
+  if (data.audio_file) payload.append("audio_file", data.audio_file);
+  if (data.cover_image) payload.append("cover_image", data.cover_image);
+  return payload;
+};
+
+const SongDetail: React.FC<SongDetailProps> = ({ songId, initialEdit = false }) => {
+  const { goBack } = useNavigation();
+  const { showToast } = useToast();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const requestSequence = useRef(0);
+  const [song, setSong] = useState<SongApi | null>(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const initialEditOpened = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [pendingReviewSave, setPendingReviewSave] = useState<PartialSong | null>(null);
+
+  const numericSongId = Number(songId);
+  const validSongId = Number.isInteger(numericSongId) && numericSongId > 0;
+
+  const loadSong = useCallback(async (selectedDays: number, initial = false, notify = false) => {
+    if (!validSongId) {
+      setError("شناسه آهنگ معتبر نیست.");
+      setLoading(false);
+      return;
+    }
+    const sequence = ++requestSequence.current;
+    initial ? setLoading(true) : setChartLoading(true);
+    setError("");
+    try {
+      const response = await apiRequest<SongApi>(`/artist/songs/${numericSongId}/`, {
+        query: { days: selectedDays },
+      });
+      if (sequence !== requestSequence.current) return;
+      setSong(response);
+      if (notify) showToast("آمار آهنگ با موفقیت به‌روزرسانی شد.", "success");
+    } catch (requestError) {
+      if (sequence !== requestSequence.current) return;
+      const message = getApiErrorMessage(requestError, "دریافت جزئیات آهنگ انجام نشد.");
+      if (initial) setError(message);
+      showToast(message, "error");
+    } finally {
+      if (sequence === requestSequence.current) {
+        setLoading(false);
+        setChartLoading(false);
+      }
+    }
+  }, [numericSongId, showToast, validSongId]);
 
   useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
+    scrollRef.current?.scrollTo({ top: 0 });
+    setDays(30);
+    setSong(null);
+    void loadSong(30, true);
+  }, [numericSongId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const close = (event: KeyboardEvent) => event.key === "Escape" && setPreviewOpen(false);
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [previewOpen]);
+
+  const dailyPlays = song?.analytics?.daily_plays || [];
+  const editorSong = useMemo(() => song ? toEditorSong(song) : null, [song]);
+
+  useEffect(() => {
+    if (!initialEdit || !song || initialEditOpened.current) return;
+    initialEditOpened.current = true;
+    setEditOpen(true);
+  }, [initialEdit, song]);
+  const chartOptions = useMemo(() => ({
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#282828",
+      borderColor: "#3E3E3E",
+      textStyle: { color: "#fff" },
+      formatter: (params: Array<{ name: string; value: number }>) => {
+        const point = params[0];
+        return `<div style="direction:rtl"><div style="color:#aaa;font-size:12px">${formatDate(point?.name, true)}</div><strong>${numberFormatter.format(point?.value || 0)} پخش</strong></div>`;
+      },
+    },
+    grid: { left: 8, right: 8, top: 18, bottom: 8, containLabel: true },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: dailyPlays.map((item) => item.date),
+      axisLabel: { color: "#929292", fontSize: 10, hideOverlap: true, formatter: (value: string) => formatDate(value, true) },
+      axisLine: { lineStyle: { color: "#363636" } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: "#929292", fontSize: 10 },
+      splitLine: { lineStyle: { color: "#292929", type: "dashed" } },
+    },
+    series: [{
+      type: "line",
+      smooth: true,
+      showSymbol: dailyPlays.length < 10,
+      symbolSize: 7,
+      data: dailyPlays.map((item) => item.count),
+      lineStyle: { width: 3, color: "#1DB954" },
+      itemStyle: { color: "#1DB954" },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: "rgba(29,185,84,.32)" },
+          { offset: 1, color: "rgba(29,185,84,0)" },
+        ]),
+      },
+    }],
+  }), [dailyPlays]);
+
+  const share = async () => {
+    if (!song?.id) return showToast("شناسه آهنگ در دسترس نیست.", "error");
+    const url = `${audienceBaseUrl}/track/${song.id}/`;
+    try {
+      const nativeShare = typeof navigator.share === "function";
+      if (nativeShare) await navigator.share({ title: song.title, url });
+      else await navigator.clipboard.writeText(url);
+      showToast(nativeShare ? "آهنگ با موفقیت به اشتراک گذاشته شد." : "پیوند آهنگ با موفقیت کپی شد.", "success");
+    } catch (shareError) {
+      if ((shareError as Error)?.name !== "AbortError") showToast("اشتراک‌گذاری آهنگ انجام نشد.", "error");
     }
-  }, [songId]);
-
-  // Dummy data - in a real app, fetch based on songId
-  const songData = {
-    id: songId,
-    title: "آهنگ جدید",
-    artist: "شما",
-    cover: "https://picsum.photos/400/400?random=1",
-    plays: "12.5K",
-    likes: "856",
-    playlists: "142",
-    duration: "3:45",
-    releaseDate: "1402/10/25",
   };
 
-  const timeRanges = ["7 روز", "30 روز", "90 روز"];
-
-  // Chart Data Generator
-  const playHistoryData = useMemo(() => {
-    const points = 20;
-    return Array.from({ length: points }).map((_, i) => ({
-      value: Math.floor(Math.random() * 100) + 50,
-      label: i % 5 === 0 ? `${i + 1}` : "",
-    }));
-  }, [activeTimeRange]);
-
-  const maxPlayValue = Math.max(...playHistoryData.map((d) => d.value));
-
-  // Generate SVG path for line chart
-  const getPath = () => {
-    const height = 200;
-    const width = 100; // percentage
-    const stepX = width / (playHistoryData.length - 1);
-
-    let path = `M 0 ${
-      height - (playHistoryData[0].value / maxPlayValue) * height
-    }`;
-
-    playHistoryData.forEach((point, i) => {
-      if (i === 0) return;
-      const x = i * stepX;
-      const y = height - (point.value / maxPlayValue) * height;
-      // Simple curve smoothing could be added here, but straight lines are efficient
-      path += ` L ${x} ${y}`;
-    });
-
-    return path;
+  const selectRange = (selectedDays: number) => {
+    if (selectedDays === days || chartLoading) return;
+    setDays(selectedDays);
+    void loadSong(selectedDays);
   };
 
-  const cityStats = [
-    { city: "تهران", plays: "3.8K", percentage: 45 },
-    { city: "مشهد", plays: "1.5K", percentage: 25 },
-    { city: "اصفهان", plays: "1.1K", percentage: 15 },
-    { city: "شیراز", plays: "758", percentage: 10 },
-    { city: "سایر", plays: "1.2K", percentage: 5 },
+  const submitSong = async (data: PartialSong, reviewConfirmed = false) => {
+    if (!song?.id || submitting) return;
+    const requiresReview = Boolean(song.requires_reapproval || song.status === "published" || song.status === "approved");
+    if (requiresReview && !reviewConfirmed) {
+      setPendingReviewSave(data);
+      return;
+    }
+    const payload = buildSongPayload(data);
+    if (requiresReview) payload.set("confirm_re_review", "true");
+    setSubmitting(true);
+    try {
+      await apiRequest<{ message: string; song: SongApi }>(`/artist/songs/${song.id}/`, {
+        method: "PATCH",
+        body: payload,
+      });
+      setEditOpen(false);
+      showToast("آهنگ ویرایش و برای بررسی ارسال شد.", "success");
+      await loadSong(days);
+    } catch (requestError) {
+      showToast(getApiErrorMessage(requestError, "ذخیره تغییرات آهنگ انجام نشد."), "error");
+    } finally {
+      setSubmitting(false);
+      if (reviewConfirmed) setPendingReviewSave(null);
+    }
+  };
+
+  if (loading) {
+    return <div className="h-full w-full animate-pulse p-4 pb-24 lg:p-8" dir="rtl"><div className="mb-6 h-10 rounded-xl bg-[#202020]"/><div className="mb-6 grid gap-6 md:grid-cols-3"><div className="h-72 rounded-2xl bg-[#181818] md:col-span-2"/><div className="h-72 rounded-2xl bg-[#181818]"/></div><div className="h-80 rounded-2xl bg-[#181818]"/></div>;
+  }
+
+  if (error || !song) {
+    return <div className="flex h-full min-h-[420px] items-center justify-center p-6" dir="rtl"><div className="max-w-md rounded-2xl border border-red-500/20 bg-[#181818] p-8 text-center"><Music2 className="mx-auto mb-4 h-12 w-12 text-[#555]"/><p className="mb-5 text-sm text-red-300" dir="ltr">{error || "آهنگ پیدا نشد."}</p><div className="flex justify-center gap-3"><button onClick={goBack} className="rounded-full border border-[#444] px-5 py-2 font-bold text-white">بازگشت</button><button onClick={() => void loadSong(days, true, true)} className="inline-flex items-center gap-2 rounded-full bg-[#1DB954] px-5 py-2 font-black text-black"><RefreshCw className="h-4 w-4"/>تلاش مجدد</button></div></div></div>;
+  }
+
+  const deleted = song.status === "deleted";
+  const status = statusMeta[song.status || ""] || { label: song.status || "نامشخص", className: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300" };
+  const locations = [
+    { title: "شهرهای برتر", key: "city" as const, rows: song.analytics?.city_distribution || [] },
+    { title: "کشورهای برتر", key: "country" as const, rows: song.analytics?.country_distribution || [] },
   ];
 
   return (
-    <div
-      ref={scrollContainerRef}
-      className="h-full overflow-y-auto w-full p-4 lg:p-8 pb-24 animate-fade-in custom-scrollbar"
-      dir="rtl"
-    >
-      {/* Header / Navigation */}
-      <div className="flex flex-row-reverse w-full justify-between items-center gap-4 mb-6">
-        <button
-          onClick={goBack}
-          className="p-2 rounded-full bg-[#282828] hover:bg-[#3E3E3E] text-white transition-colors"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <h1 className="text-xl font-bold text-white">جزئیات آهنگ</h1>
+    <div ref={scrollRef} className="h-full w-full overflow-y-auto p-4 pb-24 lg:p-8" dir="rtl">
+      <header className="mb-6 flex items-center justify-between">
+        <h1 className="text-xl font-black text-white">جزئیات آهنگ</h1>
+        <button onClick={goBack} className="rounded-full bg-[#282828] p-2.5 text-white transition hover:bg-[#3a3a3a]" aria-label="بازگشت"><ArrowLeft className="h-5 w-5"/></button>
+      </header>
+
+      {deleted && <div className="mb-5 rounded-2xl border border-zinc-500/25 bg-zinc-500/10 px-4 py-3 text-sm leading-6 text-zinc-300">این آهنگ حذف شده و از فهرست‌های تحلیلی فعال کنار گذاشته شده است؛ شناسه، آمار تاریخی و درآمد آن برای گزارش مالی و تسویه حفظ می‌شود.</div>}
+
+      <div className="mb-8 grid gap-6 md:grid-cols-3">
+        <section className={`relative flex flex-col gap-6 overflow-hidden rounded-2xl border border-[#282828] bg-[#181818] p-4 sm:flex-row sm:p-6 md:col-span-2 ${deleted ? "grayscale opacity-70" : ""}`}>
+          {deleted && <span className="pointer-events-none absolute inset-x-4 top-1/2 z-20 h-px bg-white/25"/>}
+          <button onClick={() => song.cover_image && setPreviewOpen(true)} className="aspect-square w-full shrink-0 overflow-hidden rounded-xl bg-[#262626] sm:w-48" disabled={!song.cover_image}>
+            {song.cover_image ? <img src={song.cover_image} alt={song.title} className={`h-full w-full object-cover transition duration-500 ${deleted ? "grayscale" : "hover:scale-105"}`}/> : <span className="flex h-full items-center justify-center"><Music2 className="h-12 w-12 text-[#555]"/></span>}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0"><h2 className={`break-words text-2xl font-black lg:text-3xl ${deleted ? "text-[#aaa] line-through" : "text-white"}`}>{song.title_fa ?? song.title}</h2>{song.title_en && <p className="mt-1 truncate text-sm text-[#8d8d8d]" dir="ltr">{song.title_en}</p>}<p className="mt-2 text-lg text-[#b3b3b3]">{song.artist_name || "نامشخص"}</p></div>
+              <span className={`rounded-full border px-3 py-1 text-xs font-bold ${status.className}`}>{status.label}</span>
+            </div>
+            <div className="mb-6 flex flex-wrap gap-4 text-sm text-[#aaa]"><span className="inline-flex items-center gap-1.5"><Clock className="h-4 w-4"/>{song.duration_display || "0:00"}</span><span className="inline-flex items-center gap-1.5"><Music2 className="h-4 w-4"/>{formatDate(song.release_date)}</span></div>
+            <div className="flex flex-wrap gap-3">{!deleted&&<><button onClick={() => setEditOpen(true)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-[#1DB954] px-6 py-2.5 font-black text-black transition hover:bg-[#1ed760] sm:flex-none"><Edit3 className="h-4 w-4"/>ویرایش اطلاعات آهنگ</button><button onClick={() => void share()} className="rounded-full border border-[#4a4a4a] p-2.5 text-[#bbb] transition hover:border-white hover:text-white" aria-label="اشتراک‌گذاری"><Share2 className="h-5 w-5"/></button></>}</div>
+          </div>
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-3 md:grid-cols-1">
+          {[
+            { label: "تعداد پخش", value: song.plays || 0, icon: Play, className: "text-[#1DB954] bg-[#1DB954]/10" },
+            { label: "لایک‌ها", value: song.likes_count || 0, icon: Heart, className: "text-red-400 bg-red-400/10" },
+            { label: "افزوده‌شدن به پلی‌لیست", value: song.added_to_playlists_count || 0, icon: ListPlus, className: "text-blue-400 bg-blue-400/10" },
+          ].map(({ label, value, icon: Icon, className }) => <div key={label} className="flex items-center justify-between rounded-xl border border-[#282828] bg-[#181818] p-5"><div><p className="mb-1 text-xs text-[#999]">{label}</p><p className="text-2xl font-black text-white">{numberFormatter.format(value)}</p></div><span className={`flex h-10 w-10 items-center justify-center rounded-full ${className}`}><Icon className="h-5 w-5"/></span></div>)}
+        </section>
       </div>
 
-      {/* Hero Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* Song Info & Cover */}
-        <div className="md:col-span-2 bg-[#181818] border border-[#282828] rounded-2xl p-6 flex flex-col sm:flex-row gap-6 items-start">
-          {/* Cover Image - Top Right (in RTL) / Left (in LTR) */}
-          {/* Since we are in RTL, it will be on the right naturally if we just place it. 
-                User asked for "top right". In RTL flex-row, the first item is on the right. 
-            */}
-          <div className="relative group w-full sm:w-48 aspect-square rounded-xl overflow-hidden shadow-lg shrink-0">
-            <img
-              src={songData.cover}
-              alt={songData.title}
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer backdrop-blur-sm">
-              <button
-                onClick={() => navigateTo("songs")}
-                className="w-12 h-12 bg-[#1DB954] rounded-full flex items-center justify-center text-black hover:scale-105 transition-transform shadow-xl"
-              >
-                <Music2 size={24} />
-              </button>
-            </div>
-          </div>
+      <div className="mb-6 grid gap-6 lg:grid-cols-3">
+        <section className="rounded-2xl border border-[#282828] bg-[#181818] p-4 sm:p-6 lg:col-span-2">
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-lg font-black text-white">روند پخش</h3><p className="mt-1 text-xs text-[#777]">{numberFormatter.format(song.analytics?.total_period_plays || 0)} پخش در بازه انتخابی</p></div><div className="flex rounded-xl bg-[#282828] p-1">{ranges.map((range) => <button key={range.days} onClick={() => selectRange(range.days)} disabled={chartLoading} className={`flex-1 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-bold transition ${days === range.days ? "bg-[#1DB954] text-black" : "text-[#aaa] hover:text-white"}`}>{range.label}</button>)}</div></div>
+          <div className="relative h-72">{chartLoading && <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[#181818]/70"><Loader2 className="h-7 w-7 animate-spin text-[#1DB954]"/></div>}{dailyPlays.length ? <ReactECharts option={chartOptions} style={{ height: "100%", width: "100%" }} notMerge lazyUpdate/> : <div className="flex h-full items-center justify-center text-sm text-[#777]">در این بازه پخشی ثبت نشده است.</div>}</div>
+        </section>
 
-          <div className="flex-1 w-full">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <h2 className="text-2xl lg:text-3xl font-bold text-white mb-2">
-                  {songData.title}
-                </h2>
-                <p className="text-[#B3B3B3] text-lg mb-4">{songData.artist}</p>
-              </div>
-              {/* Status Badge */}
-              <span className="px-3 py-1 bg-[#1DB954]/10 text-[#1DB954] text-xs font-medium rounded-full border border-[#1DB954]/20">
-                منتشر شده
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-4 text-sm text-[#B3B3B3] mb-6">
-              <div className="flex items-center gap-1.5">
-                <Clock size={16} />
-                <span>{songData.duration}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Music2 size={16} />
-                <span>{songData.releaseDate}</span>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => navigateTo("songs")}
-                className="flex-1 sm:flex-none px-6 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold rounded-full transition-colors flex items-center justify-center gap-2"
-              >
-                <Music2 size={18} />
-                <span>مشاهده در آهنگ‌ها</span>
-              </button>
-              <button className="p-2.5 rounded-full border border-[#B3B3B3]/30 text-[#B3B3B3] hover:text-white hover:border-white transition-colors">
-                <Share2 size={18} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Stats */}
-        <div className="grid grid-cols-1 gap-4">
-          <div className="bg-[#181818] border border-[#282828] rounded-xl p-5 flex items-center justify-between group hover:border-[#1DB954]/50 transition-colors">
-            <div>
-              <p className="text-[#B3B3B3] text-sm mb-1">تعداد پخش</p>
-              <p className="text-2xl font-bold text-white">{songData.plays}</p>
-            </div>
-            <div className="w-10 h-10 rounded-full bg-[#1DB954]/10 flex items-center justify-center text-[#1DB954] group-hover:scale-110 transition-transform">
-              <Play size={20} fill="currentColor" />
-            </div>
-          </div>
-
-          <div className="bg-[#181818] border border-[#282828] rounded-xl p-5 flex items-center justify-between group hover:border-[#ef4444]/50 transition-colors">
-            <div>
-              <p className="text-[#B3B3B3] text-sm mb-1">لایک‌ها</p>
-              <p className="text-2xl font-bold text-white">{songData.likes}</p>
-            </div>
-            <div className="w-10 h-10 rounded-full bg-[#ef4444]/10 flex items-center justify-center text-[#ef4444] group-hover:scale-110 transition-transform">
-              <Heart size={20} />
-            </div>
-          </div>
-
-          <div className="bg-[#181818] border border-[#282828] rounded-xl p-5 flex items-center justify-between group hover:border-[#3b82f6]/50 transition-colors">
-            <div>
-              <p className="text-[#B3B3B3] text-sm mb-1">افزودن به پلی‌لیست</p>
-              <p className="text-2xl font-bold text-white">
-                {songData.playlists}
-              </p>
-            </div>
-            <div className="w-10 h-10 rounded-full bg-[#3b82f6]/10 flex items-center justify-center text-[#3b82f6] group-hover:scale-110 transition-transform">
-              <ListPlus size={20} />
-            </div>
-          </div>
-        </div>
+        <section className="rounded-2xl border border-[#282828] bg-[#181818] p-4 sm:p-6"><div className="mb-5 flex items-center justify-between"><h3 className="text-lg font-black text-white">موقعیت مخاطبان</h3><MapPin className="h-5 w-5 text-[#1DB954]"/></div><div className="space-y-6">{locations.map(({ title, key, rows }) => <div key={title}><p className="mb-3 text-xs font-bold text-[#888]">{title}</p><div className="space-y-3">{rows.slice(0, 4).map((row, index) => { const label = row[key] || "نامشخص"; return <div key={`${label}-${index}`}><div className="mb-1.5 flex justify-between text-xs"><span className="truncate text-white">{label}</span><span className="text-[#999]">{numberFormatter.format(row.count)} · {row.percentage}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#292929]"><div className="h-full rounded-full bg-[#1DB954]" style={{ width: `${Math.min(100, row.percentage)}%` }}/></div></div>; })}{!rows.length && <p className="text-xs text-[#666]">داده‌ای ثبت نشده است.</p>}</div></div>)}</div></section>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Play History Chart */}
-        <div className="lg:col-span-2 bg-[#181818] border border-[#282828] rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-bold text-white">روند پخش</h3>
-            <div className="flex bg-[#282828] rounded-lg p-1">
-              {timeRanges.map((range) => (
-                <button
-                  key={range}
-                  onClick={() => setActiveTimeRange(range)}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    activeTimeRange === range
-                      ? "bg-[#1DB954] text-black shadow-sm"
-                      : "text-[#B3B3B3] hover:text-white"
-                  }`}
-                >
-                  {range}
-                </button>
-              ))}
-            </div>
-          </div>
+      <SongModal
+        isOpen={editOpen}
+        onClose={() => { if (!submitting && !pendingReviewSave) setEditOpen(false); }}
+        onSubmit={submitSong}
+        initialData={editorSong}
+        initialIsSingle={song.is_single ?? true}
+        isSubmitting={submitting}
+      />
+      <ConfirmModal
+        open={Boolean(pendingReviewSave)}
+        title="ارسال دوباره برای بررسی"
+        description="با ذخیره این تغییرات، آهنگ و انتشار مرتبط دوباره در انتظار تأیید قرار می‌گیرند. آیا ادامه می‌دهید؟"
+        confirmLabel="ذخیره و ارسال برای بررسی"
+        cancelLabel="بازگشت به ویرایش"
+        loading={submitting}
+        onCancel={() => !submitting && setPendingReviewSave(null)}
+        onConfirm={() => pendingReviewSave ? submitSong(pendingReviewSave, true) : undefined}
+      />
 
-          <div className="h-64 w-full relative">
-            {/* Simple SVG Line Chart */}
-            <svg
-              className="w-full h-full overflow-visible"
-              viewBox="0 0 100 200"
-              preserveAspectRatio="none"
-            >
-              {/* Grid lines */}
-              <line
-                x1="0"
-                y1="0"
-                x2="100"
-                y2="0"
-                stroke="#333"
-                strokeWidth="0.5"
-                strokeDasharray="2"
-              />
-              <line
-                x1="0"
-                y1="50"
-                x2="100"
-                y2="50"
-                stroke="#333"
-                strokeWidth="0.5"
-                strokeDasharray="2"
-              />
-              <line
-                x1="0"
-                y1="100"
-                x2="100"
-                y2="100"
-                stroke="#333"
-                strokeWidth="0.5"
-                strokeDasharray="2"
-              />
-              <line
-                x1="0"
-                y1="150"
-                x2="100"
-                y2="150"
-                stroke="#333"
-                strokeWidth="0.5"
-                strokeDasharray="2"
-              />
-              <line
-                x1="0"
-                y1="200"
-                x2="100"
-                y2="200"
-                stroke="#333"
-                strokeWidth="0.5"
-                strokeDasharray="2"
-              />
-
-              {/* The Line */}
-              <path
-                d={getPath()}
-                fill="none"
-                stroke="#1DB954"
-                strokeWidth="2"
-                vectorEffect="non-scaling-stroke"
-                className="drop-shadow-[0_0_10px_rgba(29,185,84,0.3)]"
-              />
-
-              {/* Area under the line (optional, for better look) */}
-              <path
-                d={`${getPath()} L 100 200 L 0 200 Z`}
-                fill="url(#gradient)"
-                opacity="0.2"
-              />
-
-              <defs>
-                <linearGradient id="gradient" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="#1DB954" />
-                  <stop offset="100%" stopColor="#1DB954" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-        </div>
-
-        {/* City Stats */}
-        <div className="bg-[#181818] border border-[#282828] rounded-2xl p-6">
-          <h3 className="text-lg font-bold text-white mb-6">پخش بر اساس شهر</h3>
-          <div className="space-y-5">
-            {cityStats.map((city, index) => (
-              <div key={index}>
-                <div className="flex items-center justify-between mb-2 text-sm">
-                  <span className="text-white font-medium">{city.city}</span>
-                  <span className="text-[#B3B3B3]">{city.plays}</span>
-                </div>
-                <div className="h-2 w-full bg-[#282828] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#1DB954] rounded-full"
-                    style={{ width: `${city.percentage}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      {previewOpen && song.cover_image && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" onClick={() => setPreviewOpen(false)}><img src={song.cover_image} alt={song.title} className="max-h-[88vh] max-w-[92vw] rounded-2xl object-contain shadow-2xl" onClick={(event) => event.stopPropagation()}/><button onClick={() => setPreviewOpen(false)} className="absolute left-4 top-4 rounded-full bg-[#202020] px-4 py-2 text-xl text-white" aria-label="بستن">×</button></div>}
     </div>
   );
 };
