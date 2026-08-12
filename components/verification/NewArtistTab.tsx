@@ -12,6 +12,7 @@ import {
   Mail,
   IdCard,
   Camera,
+  AlertTriangle,
 } from "lucide-react";
 import { useImageCropper } from "../../contexts/ImageCropperContext";
 
@@ -87,6 +88,31 @@ const IRAN_CITIES_FA = [
   "نجف‌آباد",
 ];
 
+const getValidationErrors = (formData: FormData): Partial<Record<keyof FormData, string>> => {
+  const newErrors: Partial<Record<keyof FormData, string>> = {};
+
+  if (!formData.firstName.trim()) newErrors.firstName = "نام فارسی الزامی است";
+  if (!formData.firstNameEn.trim()) newErrors.firstNameEn = "نام انگلیسی الزامی است";
+  if (!formData.lastName.trim()) newErrors.lastName = "نام خانوادگی فارسی الزامی است";
+  if (!formData.lastNameEn.trim()) newErrors.lastNameEn = "نام خانوادگی انگلیسی الزامی است";
+  if (!formData.artisticName.trim()) newErrors.artisticName = "نام هنری فارسی الزامی است";
+  if (!formData.artisticNameEn.trim()) newErrors.artisticNameEn = "نام هنری انگلیسی الزامی است";
+  if (!formData.birthDate) newErrors.birthDate = "تاریخ تولد الزامی است";
+  if (!formData.nationalId.trim()) newErrors.nationalId = "کد ملی الزامی است";
+  else if (!/^\d{10}$/.test(formData.nationalId))
+    newErrors.nationalId = "کد ملی باید ۱۰ رقم باشد";
+  if (!formData.phoneNumber.trim())
+    newErrors.phoneNumber = "شماره موبایل الزامی است";
+  else if (!/^09\d{9}$/.test(formData.phoneNumber))
+    newErrors.phoneNumber = "شماره موبایل معتبر نیست";
+  if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email))
+    newErrors.email = "ایمیل واردشده معتبر نیست";
+  if (!formData.city.trim()) newErrors.city = "شهر الزامی است";
+  if (!formData.idCardImage) newErrors.idCardImage = "تصویر کارت ملی الزامی است";
+
+  return newErrors;
+};
+
 const NewArtistTab: React.FC<NewArtistTabProps> = ({
   onSubmit,
   isSubmitting,
@@ -144,24 +170,12 @@ const NewArtistTab: React.FC<NewArtistTabProps> = ({
     }
   };
 
-  const isFormValid = useMemo(() => {
-    const f = formData;
-    const nationalValid = /^\d{10}$/.test(f.nationalId);
-    const phoneValid = /^09\d{9}$/.test(f.phoneNumber);
-    return (
-      f.firstName.trim().length > 0 &&
-      f.firstNameEn.trim().length > 0 &&
-      f.lastName.trim().length > 0 &&
-      f.lastNameEn.trim().length > 0 &&
-      f.artisticName.trim().length > 0 &&
-      f.artisticNameEn.trim().length > 0 &&
-      f.birthDate &&
-      nationalValid &&
-      phoneValid &&
-      f.city.trim().length > 0 &&
-      !!f.idCardImage
-    );
-  }, [formData]);
+  const validationErrors = useMemo(() => getValidationErrors(formData), [formData]);
+  const submissionBlockers = useMemo(
+    () => Object.values(validationErrors).filter((message): message is string => Boolean(message)),
+    [validationErrors],
+  );
+  const isFormValid = submissionBlockers.length === 0;
 
   const previewUrlsRef = useRef<{ profile?: string; idCard?: string }>({});
 
@@ -210,31 +224,8 @@ const NewArtistTab: React.FC<NewArtistTabProps> = ({
   };
 
   const validateForm = (): boolean => {
-    const newErrors: Partial<Record<keyof FormData, string>> = {};
-
-    if (!formData.firstName.trim()) newErrors.firstName = "نام فارسی الزامی است";
-    if (!formData.firstNameEn.trim()) newErrors.firstNameEn = "نام انگلیسی الزامی است";
-    if (!formData.lastName.trim()) newErrors.lastName = "نام خانوادگی فارسی الزامی است";
-    if (!formData.lastNameEn.trim()) newErrors.lastNameEn = "نام خانوادگی انگلیسی الزامی است";
-    if (!formData.artisticName.trim()) newErrors.artisticName = "نام هنری فارسی الزامی است";
-    if (!formData.artisticNameEn.trim()) newErrors.artisticNameEn = "نام هنری انگلیسی الزامی است";
-    if (!formData.birthDate) newErrors.birthDate = "تاریخ تولد الزامی است";
-    if (!formData.nationalId.trim()) newErrors.nationalId = "کد ملی الزامی است";
-    else if (!/^\d{10}$/.test(formData.nationalId))
-      newErrors.nationalId = "کد ملی باید 10 رقم باشد";
-    if (!formData.phoneNumber.trim())
-      newErrors.phoneNumber = "شماره موبایل الزامی است";
-    else if (!/^09\d{9}$/.test(formData.phoneNumber))
-      newErrors.phoneNumber = "شماره موبایل معتبر نیست";
-    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = "ایمیل معتبر نیست";
-    }
-    if (!formData.city.trim()) newErrors.city = "شهر فارسی الزامی است";
-    if (!formData.idCardImage)
-      newErrors.idCardImage = "تصویر کارت ملی الزامی است";
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    setErrors(validationErrors);
+    return isFormValid;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -547,6 +538,38 @@ const NewArtistTab: React.FC<NewArtistTabProps> = ({
           </div>
         </div>
       </div>
+
+      {submissionBlockers.length > 0 && (
+        <div
+          className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] p-3 md:p-4"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-400/10 text-amber-300">
+              <AlertTriangle className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-amber-200">
+                  برای ارسال درخواست، این موارد را تکمیل کنید
+                </p>
+                <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
+                  {submissionBlockers.length} مورد
+                </span>
+              </div>
+              <ul className="mt-2 grid gap-x-6 gap-y-1.5 text-xs text-[#d6d6d6] sm:grid-cols-2">
+                {submissionBlockers.map((blocker) => (
+                  <li key={blocker} className="flex items-start gap-2 leading-5">
+                    <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" />
+                    <span>{blocker}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Submit Button */}
       <div className="flex justify-center pt-2 md:pt-4">

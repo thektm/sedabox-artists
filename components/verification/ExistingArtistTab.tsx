@@ -6,7 +6,7 @@ import persian_fa from "react-date-object/locales/persian_fa";
 const DatePicker = dynamic(() => import("react-multi-date-picker"), {
   ssr: false,
 });
-import { Search, Upload, Calendar, IdCard, CheckCircle2 } from "lucide-react";
+import { Search, Upload, Calendar, IdCard, CheckCircle2, AlertTriangle } from "lucide-react";
 import { apiRequest, getApiErrorMessage, unwrapList } from "../../lib/api";
 import { useToast } from "../../contexts/ToastContext";
 import { useImageCropper } from "../../contexts/ImageCropperContext";
@@ -90,6 +90,27 @@ const getArtistPlaceholder = (artist: Artist) => {
   const accent = "#1DB954";
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='100%' height='100%' fill='${bg}'/><circle cx='200' cy='120' r='72' fill='${accent}' opacity='0.15'/><text x='50%' y='55%' font-size='140' fill='${accent}' font-family='Inter, Roboto, Arial, Helvetica, sans-serif' font-weight='700' dominant-baseline='middle' text-anchor='middle'>${initials}</text><text x='50%' y='78%' font-size='20' fill='#B3B3B3' font-family='Inter, Roboto, Arial, Helvetica, sans-serif' dominant-baseline='middle' text-anchor='middle'>Artist</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+const getValidationErrors = (formData: FormData): Partial<Record<keyof FormData, string>> => {
+  const newErrors: Partial<Record<keyof FormData, string>> = {};
+
+  if (!formData.selectedArtist)
+    newErrors.selectedArtist = "انتخاب هنرمند الزامی است";
+  if (!formData.firstName.trim()) newErrors.firstName = "نام الزامی است";
+  if (!formData.lastName.trim()) newErrors.lastName = "نام خانوادگی الزامی است";
+  if (!formData.phoneNumber.trim())
+    newErrors.phoneNumber = "شماره موبایل الزامی است";
+  else if (!/^09\d{9}$/.test(formData.phoneNumber))
+    newErrors.phoneNumber = "شماره موبایل معتبر نیست";
+  if (!formData.city.trim()) newErrors.city = "شهر الزامی است";
+  if (!formData.birthDate) newErrors.birthDate = "تاریخ تولد الزامی است";
+  if (!formData.nationalId.trim()) newErrors.nationalId = "کد ملی الزامی است";
+  else if (!/^\d{10}$/.test(formData.nationalId))
+    newErrors.nationalId = "کد ملی باید ۱۰ رقم باشد";
+  if (!formData.idCardImage) newErrors.idCardImage = "تصویر کارت ملی الزامی است";
+
+  return newErrors;
 };
 
 const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
@@ -184,21 +205,12 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
     }
   };
 
-  const isFormValid = useMemo(() => {
-    const f = formData;
-    const nationalValid = /^\d{10}$/.test(f.nationalId);
-    const phoneValid = /^09\d{9}$/.test(f.phoneNumber);
-    return (
-      !!f.selectedArtist &&
-      f.firstName.trim().length > 0 &&
-      f.lastName.trim().length > 0 &&
-      phoneValid &&
-      f.city.trim().length > 0 &&
-      f.birthDate &&
-      nationalValid &&
-      !!f.idCardImage
-    );
-  }, [formData]);
+  const validationErrors = useMemo(() => getValidationErrors(formData), [formData]);
+  const submissionBlockers = useMemo(
+    () => Object.values(validationErrors).filter((message): message is string => Boolean(message)),
+    [validationErrors],
+  );
+  const isFormValid = submissionBlockers.length === 0;
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
@@ -228,27 +240,8 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
   };
 
   const validateForm = (): boolean => {
-    const newErrors: Partial<Record<keyof FormData, string>> = {};
-
-    if (!formData.selectedArtist)
-      newErrors.selectedArtist = "انتخاب هنرمند الزامی است";
-    if (!formData.firstName.trim()) newErrors.firstName = "نام الزامی است";
-    if (!formData.lastName.trim())
-      newErrors.lastName = "نام خانوادگی الزامی است";
-    if (!formData.phoneNumber.trim())
-      newErrors.phoneNumber = "شماره موبایل الزامی است";
-    else if (!/^09\d{9}$/.test(formData.phoneNumber))
-      newErrors.phoneNumber = "شماره موبایل معتبر نیست";
-    if (!formData.city.trim()) newErrors.city = "شهر الزامی است";
-    if (!formData.birthDate) newErrors.birthDate = "تاریخ تولد الزامی است";
-    if (!formData.nationalId.trim()) newErrors.nationalId = "کد ملی الزامی است";
-    else if (!/^\d{10}$/.test(formData.nationalId))
-      newErrors.nationalId = "کد ملی باید 10 رقم باشد";
-    if (!formData.idCardImage)
-      newErrors.idCardImage = "تصویر کارت ملی الزامی است";
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    setErrors(validationErrors);
+    return isFormValid;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -748,6 +741,38 @@ const ExistingArtistTab: React.FC<ExistingArtistTabProps> = ({
           </p>
         </div>
       </div>
+
+      {submissionBlockers.length > 0 && (
+        <div
+          className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] p-3 md:p-4"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-400/10 text-amber-300">
+              <AlertTriangle className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-amber-200">
+                  برای ارسال درخواست، این موارد را تکمیل کنید
+                </p>
+                <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
+                  {submissionBlockers.length} مورد
+                </span>
+              </div>
+              <ul className="mt-2 grid gap-x-6 gap-y-1.5 text-xs text-[#d6d6d6] sm:grid-cols-2">
+                {submissionBlockers.map((blocker) => (
+                  <li key={blocker} className="flex items-start gap-2 leading-5">
+                    <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" />
+                    <span>{blocker}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Submit Button */}
       <div className="flex justify-center pt-2 md:pt-4">
