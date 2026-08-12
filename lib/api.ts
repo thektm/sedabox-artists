@@ -51,34 +51,157 @@ const parseResponse = async (response: Response): Promise<unknown> => {
   return response.text().catch(() => "");
 };
 
-let refreshPromise: Promise<boolean> | null = null;
+const ACCESS_KEY = "sedabox_token";
+const REFRESH_KEY = "sedabox_refresh_token";
+const USER_KEY = "sedabox_user";
+const SESSION_EVENT = "sedabox:artist-session";
+const REFRESH_LOCK = "sedabox:artist-refresh";
 
-const refreshAccessToken = async (): Promise<boolean> => {
-  if (typeof window === "undefined") return false;
+const emitSessionChange = () => {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_EVENT));
+};
+
+export const artistSession = {
+  access: () => typeof window === "undefined" ? null : localStorage.getItem(ACCESS_KEY),
+  refresh: () => typeof window === "undefined" ? null : localStorage.getItem(REFRESH_KEY),
+  user: <T = unknown>(): T | null => {
+    if (typeof window === "undefined") return null;
+    try { return JSON.parse(localStorage.getItem(USER_KEY) || "null") as T | null; } catch { return null; }
+  },
+  save: (access: string, refresh: string, user: unknown) => {
+    localStorage.setItem(ACCESS_KEY, access);
+    localStorage.setItem(REFRESH_KEY, refresh);
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    emitSessionChange();
+  },
+  updateTokens: (access: string, refresh?: string | null) => {
+    localStorage.setItem(ACCESS_KEY, access);
+    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+    emitSessionChange();
+  },
+  updateUser: (user: unknown) => {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    emitSessionChange();
+  },
+  clear: () => {
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(ACCESS_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+    emitSessionChange();
+  },
+};
+
+export const artistSessionEventName = SESSION_EVENT;
+export type RefreshSessionResult = "refreshed" | "expired" | "temporary_failure" | "missing";
+
+let refreshPromise: Promise<RefreshSessionResult> | null = null;
+
+const readRefreshErrorCode = (data: unknown): string => {
+  if (!data || typeof data !== "object") return "";
+  const record = data as Record<string, any>;
+  if (record.error && typeof record.error === "object" && typeof record.error.code === "string") {
+    return record.error.code;
+  }
+  return typeof record.code === "string" ? record.code : "";
+};
+
+const isTerminalRefreshFailure = (status: number, data: unknown) => {
+  if (status !== 401) return false;
+  const code = readRefreshErrorCode(data);
+  return code === "TOKEN_INVALID" || code === "TOKEN_REVOKED";
+};
+
+const performRefresh = async (failedAccessToken?: string | null): Promise<RefreshSessionResult> => {
+  const currentAccess = artistSession.access();
+  if (failedAccessToken && currentAccess && currentAccess !== failedAccessToken) return "refreshed";
+
+  const usedRefresh = artistSession.refresh();
+  if (!usedRefresh) return "missing";
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept-Language": "fa", Accept: "application/json" },
+      body: JSON.stringify({ refreshToken: usedRefresh }),
+      cache: "no-store",
+    });
+    const data = (await parseResponse(response)) as Record<string, unknown>;
+
+    if (!response.ok || !data?.accessToken) {
+      // Another tab/request may have rotated the token while this request was in flight.
+      let latestRefresh = artistSession.refresh();
+      let latestAccess = artistSession.access();
+      if ((latestRefresh && latestRefresh !== usedRefresh) || (failedAccessToken && latestAccess && latestAccess !== failedAccessToken)) {
+        return "refreshed";
+      }
+      if (isTerminalRefreshFailure(response.status, data)) {
+        // Browsers without Web Locks can still race with a refresh-token rotation in another tab.
+        // Give that winner a short grace window to publish the rotated credentials before deciding
+        // that this exact refresh session is genuinely dead.
+        const deadline = Date.now() + 600;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 75));
+          latestRefresh = artistSession.refresh();
+          latestAccess = artistSession.access();
+          if ((latestRefresh && latestRefresh !== usedRefresh) || (failedAccessToken && latestAccess && latestAccess !== failedAccessToken)) {
+            return "refreshed";
+          }
+        }
+        return "expired";
+      }
+      return "temporary_failure";
+    }
+
+    const nextAccess = String(data.accessToken);
+    const nextRefresh = data.refreshToken ? String(data.refreshToken) : usedRefresh;
+    if (data.user && typeof data.user === "object") {
+      const currentUser = artistSession.user<Record<string, unknown>>() || {};
+      artistSession.save(nextAccess, nextRefresh, { ...currentUser, ...(data.user as Record<string, unknown>) });
+    } else {
+      artistSession.updateTokens(nextAccess, nextRefresh);
+    }
+    return "refreshed";
+  } catch {
+    return "temporary_failure";
+  }
+};
+
+export const refreshArtistSession = async (failedAccessToken?: string | null): Promise<RefreshSessionResult> => {
+  if (typeof window === "undefined") return "temporary_failure";
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const refreshToken = localStorage.getItem("sedabox_refresh_token");
-    if (!refreshToken) return false;
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept-Language": "fa" },
-        body: JSON.stringify({ refreshToken }),
-      });
-      const data = (await parseResponse(response)) as Record<string, unknown>;
-      if (!response.ok || !data?.accessToken) return false;
-      localStorage.setItem("sedabox_token", String(data.accessToken));
-      if (data.refreshToken) localStorage.setItem("sedabox_refresh_token", String(data.refreshToken));
-      return true;
-    } catch {
-      return false;
-    } finally {
-      refreshPromise = null;
+    const locks = typeof navigator !== "undefined" ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+    if (locks?.request) {
+      return locks.request(REFRESH_LOCK, { mode: "exclusive" }, () => performRefresh(failedAccessToken));
     }
+    return performRefresh(failedAccessToken);
   })();
 
-  return refreshPromise;
+  try { return await refreshPromise; }
+  finally { refreshPromise = null; }
+};
+
+export const getFreshArtistAccessToken = async (forceRefresh = false): Promise<string | null> => {
+  const current = artistSession.access();
+  if (current && !forceRefresh) return current;
+  const result = await refreshArtistSession(forceRefresh ? current : null);
+  if (result === "refreshed") return artistSession.access();
+  if (result === "expired") artistSession.clear();
+  return null;
+};
+
+export const logoutArtistSession = (): void => {
+  if (typeof window === "undefined") return;
+  const refreshToken = artistSession.refresh();
+  artistSession.clear();
+  if (!refreshToken) return;
+  void fetch(`${API_BASE_URL}/auth/logout/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept-Language": "fa", Accept: "application/json" },
+    body: JSON.stringify({ refreshToken }),
+    cache: "no-store",
+  }).catch(() => undefined);
 };
 
 export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
@@ -107,10 +230,8 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
     headers.set("Content-Type", "application/json");
     requestBody = JSON.stringify(body);
   }
-  if (auth && typeof window !== "undefined") {
-    const token = localStorage.getItem("sedabox_token");
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-  }
+  const tokenUsed = auth && typeof window !== "undefined" ? artistSession.access() : null;
+  if (tokenUsed) headers.set("Authorization", `Bearer ${tokenUsed}`);
 
   let response: Response;
   try {
@@ -120,8 +241,10 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
     throw new ApiError("ارتباط با سرور برقرار نشد. اینترنت خود را بررسی کنید و دوباره تلاش کنید.");
   }
 
-  if (response.status === 401 && auth && retryAuth && (await refreshAccessToken())) {
-    return apiRequest<T>(endpoint, { ...options, retryAuth: false });
+  if (response.status === 401 && auth && retryAuth) {
+    const refreshResult = await refreshArtistSession(tokenUsed);
+    if (refreshResult === "refreshed") return apiRequest<T>(endpoint, { ...options, retryAuth: false });
+    if (refreshResult === "expired") artistSession.clear();
   }
 
   const data = await parseResponse(response);
@@ -160,12 +283,13 @@ export async function apiUpload<T>(endpoint: string, options: UploadOptions): Pr
   const { body, onProgress, timeoutMs = 30 * 60 * 1000, retryAuth = true } = options;
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
 
+  let tokenUsedForAttempt: string | null = null;
   const send = () => new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
     xhr.timeout = timeoutMs;
-    const token = localStorage.getItem("sedabox_token");
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    tokenUsedForAttempt = artistSession.access();
+    if (tokenUsedForAttempt) xhr.setRequestHeader("Authorization", `Bearer ${tokenUsedForAttempt}`);
     xhr.setRequestHeader("Accept-Language", "fa");
 
     xhr.upload.onprogress = (event) => {
@@ -189,8 +313,10 @@ export async function apiUpload<T>(endpoint: string, options: UploadOptions): Pr
   try {
     return await send();
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401 && retryAuth && await refreshAccessToken()) {
-      return apiUpload<T>(endpoint, { ...options, retryAuth: false });
+    if (error instanceof ApiError && error.status === 401 && retryAuth) {
+      const refreshResult = await refreshArtistSession(tokenUsedForAttempt);
+      if (refreshResult === "refreshed") return apiUpload<T>(endpoint, { ...options, retryAuth: false });
+      if (refreshResult === "expired") artistSession.clear();
     }
     throw error;
   }

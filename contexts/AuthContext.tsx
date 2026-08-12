@@ -5,7 +5,15 @@ import React, {
   useEffect,
   ReactNode,
 } from "react";
-import { API_BASE_URL } from "../lib/api";
+import {
+  API_BASE_URL,
+  ApiError,
+  apiRequest,
+  artistSession,
+  artistSessionEventName,
+  refreshArtistSession,
+  logoutArtistSession,
+} from "../lib/api";
 import { getPersianPayloadMessage, toPersianMessage } from "../lib/faMessages";
 
 export type VerificationStatus = "none" | "pending" | "approved" | "rejected";
@@ -203,156 +211,100 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return data;
   };
 
-  // Attempt to refresh access token using saved refresh token
-  const refreshTokens = async (): Promise<boolean> => {
-    const savedRefresh = localStorage.getItem("sedabox_refresh_token");
-    if (!savedRefresh) return false;
-
-    try {
-      const res = await fetch(`${BASE_URL}/auth/token/refresh/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept-Language": "fa" },
-        body: JSON.stringify({ refreshToken: savedRefresh }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        return false;
-      }
-
-      if (data.accessToken) {
-        localStorage.setItem("sedabox_token", data.accessToken);
-      }
-      if (data.refreshToken) {
-        localStorage.setItem("sedabox_refresh_token", data.refreshToken);
-      }
-
-      return true;
-    } catch (err) {
-      console.error("Failed to refresh tokens:", err);
-      return false;
-    }
-  };
-
-  // Fetch existing artist auth submission for current user
+  // Fetch existing artist auth submission through the shared authenticated client.
   const fetchArtistAuth = async () => {
-    const token = localStorage.getItem("sedabox_token");
-    if (!token) return null;
-
     try {
-      const res = await fetch(`${BASE_URL}/artist/auth/`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept-Language": "fa",
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (res.status === 404) return null;
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(getPersianPayloadMessage(err, "دریافت وضعیت احراز هویت هنرمند انجام نشد."));
-      }
-
-      const data = await res.json().catch(() => null);
-      return data;
+      return await apiRequest<any>("/artist/auth/");
     } catch (err) {
-      console.error("fetchArtistAuth error:", err);
-      return null;
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
     }
   };
 
-  // Load user from localStorage on mount
+  // Hydrate the persisted session immediately. Network/server failures never log the artist out.
   useEffect(() => {
-    const checkAuth = async () => {
-      setIsInitializing(true);
-      const savedUser = localStorage.getItem("sedabox_user");
-      const savedToken = localStorage.getItem("sedabox_token");
+    let disposed = false;
 
-      if (savedUser) {
-        try {
-          const parsedUser = JSON.parse(savedUser);
-
-          // If we have a refresh token, try to refresh while splash shows
-          const savedRefresh = localStorage.getItem("sedabox_refresh_token");
-          if (savedRefresh) {
-            const ok = await refreshTokens();
-            if (ok) {
-              // After refreshing tokens, fetch artist auth to determine verification state
-              const auth = await fetchArtistAuth();
-              if (auth) {
-                // There is an existing submission
-                const updatedUser = {
-                  ...parsedUser,
-                  verificationStatus: auth.is_verified ? "approved" : "pending",
-                  verificationData: auth,
-                } as User;
-                localStorage.setItem(
-                  "sedabox_user",
-                  JSON.stringify(updatedUser),
-                );
-                setUser(updatedUser);
-                setIsLoggedIn(true);
-                setVerificationStatus(updatedUser.verificationStatus || "none");
-                // If pending, leave UI to show pending state; if approved, proceed
-              } else {
-                // No submission found on server — clear any stale verification state
-                const clearedUser = { ...parsedUser } as User;
-                delete (clearedUser as any).verificationData;
-                clearedUser.verificationStatus = "none";
-                localStorage.setItem(
-                  "sedabox_user",
-                  JSON.stringify(clearedUser),
-                );
-                setUser(clearedUser);
-                setIsLoggedIn(true);
-                setVerificationStatus("none");
-              }
-            } else {
-              // Refresh failed: clear stored auth
-              localStorage.removeItem("sedabox_user");
-              localStorage.removeItem("sedabox_token");
-              localStorage.removeItem("sedabox_refresh_token");
-            }
-          } else if (savedToken) {
-            // No refresh token available but access token exists — try to fetch artist auth
-            const auth = await fetchArtistAuth();
-            if (auth) {
-              const updatedUser = {
-                ...parsedUser,
-                verificationStatus: auth.is_verified ? "approved" : "pending",
-                verificationData: auth,
-              } as User;
-              localStorage.setItem("sedabox_user", JSON.stringify(updatedUser));
-              setUser(updatedUser);
-              setIsLoggedIn(true);
-              setVerificationStatus(updatedUser.verificationStatus || "none");
-            } else {
-              // No server submission — clear any stale verification status
-              const clearedUser = { ...parsedUser } as User;
-              delete (clearedUser as any).verificationData;
-              clearedUser.verificationStatus = "none";
-              localStorage.setItem("sedabox_user", JSON.stringify(clearedUser));
-              setUser(clearedUser);
-              setIsLoggedIn(true);
-              setVerificationStatus("none");
-            }
-          }
-        } catch (err) {
-          console.error("Failed to parse saved user:", err);
-          localStorage.removeItem("sedabox_user");
-          localStorage.removeItem("sedabox_token");
-          localStorage.removeItem("sedabox_refresh_token");
-        }
+    const applyStoredSession = () => {
+      const storedUser = artistSession.user<User>();
+      const hasCredentials = Boolean(artistSession.access() || artistSession.refresh());
+      if (!storedUser || !hasCredentials) {
+        setUser(null);
+        setIsLoggedIn(false);
+        setVerificationStatus("none");
+        setShowVerificationModal(false);
+        return null;
       }
-
-      setIsInitializing(false);
+      setUser(storedUser);
+      setIsLoggedIn(true);
+      setVerificationStatus(storedUser.verificationStatus || "none");
+      return storedUser;
     };
 
-    checkAuth();
+    const checkAuth = async () => {
+      setIsInitializing(true);
+      let storedUser = applyStoredSession();
+      if (!storedUser && artistSession.refresh()) {
+        const recovery = await refreshArtistSession();
+        if (recovery === "refreshed") storedUser = applyStoredSession();
+        else if (recovery === "expired") artistSession.clear();
+      }
+      if (!storedUser) {
+        if (!disposed) setIsInitializing(false);
+        return;
+      }
+
+      try {
+        if (!artistSession.access() && artistSession.refresh()) {
+          const result = await refreshArtistSession();
+          if (result === "expired") {
+            artistSession.clear();
+            applyStoredSession();
+            return;
+          }
+          if (result === "temporary_failure") return;
+        }
+
+        const auth = await fetchArtistAuth();
+        if (disposed || !artistSession.user<User>()) return;
+        const currentUser = artistSession.user<User>() || storedUser;
+        if (auth) {
+          const updatedUser: User = {
+            ...currentUser,
+            verificationStatus: auth.is_verified ? "approved" : "pending",
+            verificationData: auth,
+          };
+          artistSession.updateUser(updatedUser);
+          setUser(updatedUser);
+          setVerificationStatus(updatedUser.verificationStatus || "none");
+        } else {
+          const clearedUser = { ...currentUser } as User;
+          delete (clearedUser as any).verificationData;
+          clearedUser.verificationStatus = "none";
+          artistSession.updateUser(clearedUser);
+          setUser(clearedUser);
+          setVerificationStatus("none");
+        }
+      } catch {
+        // Keep the persisted session intact on network errors, server errors and non-terminal request failures.
+        if (!disposed) applyStoredSession();
+      } finally {
+        if (!disposed) setIsInitializing(false);
+      }
+    };
+
+    const syncSession = () => {
+      if (!disposed) applyStoredSession();
+    };
+    window.addEventListener(artistSessionEventName, syncSession);
+    window.addEventListener("storage", syncSession);
+    void checkAuth();
+
+    return () => {
+      disposed = true;
+      window.removeEventListener(artistSessionEventName, syncSession);
+      window.removeEventListener("storage", syncSession);
+    };
   }, []);
 
   // Show verification modal for first-time logged in users
@@ -379,10 +331,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const { accessToken, refreshToken, user: userData } = data;
 
-      // Save to localStorage
-      localStorage.setItem("sedabox_user", JSON.stringify(userData));
-      localStorage.setItem("sedabox_token", accessToken);
-      localStorage.setItem("sedabox_refresh_token", refreshToken);
+      artistSession.save(accessToken, refreshToken, userData);
 
       // Set basic user state first
       setUser(userData);
@@ -398,7 +347,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             verificationStatus: auth.is_verified ? "approved" : "pending",
             verificationData: auth,
           } as User;
-          localStorage.setItem("sedabox_user", JSON.stringify(updatedUser));
+          artistSession.updateUser(updatedUser);
           setUser(updatedUser);
           setVerificationStatus(updatedUser.verificationStatus || "none");
           // If there's an auth (pending or approved), do not show the initial artist verify modal
@@ -408,7 +357,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const clearedUser = { ...userData } as User;
           delete (clearedUser as any).verificationData;
           clearedUser.verificationStatus = "none";
-          localStorage.setItem("sedabox_user", JSON.stringify(clearedUser));
+          artistSession.updateUser(clearedUser);
           setUser(clearedUser);
           setVerificationStatus("none");
           setShowVerificationModal(true);
@@ -481,42 +430,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         formData.append("national_id_image", data.idCardFile);
       }
 
-      const token = localStorage.getItem("sedabox_token");
-      const headers: Record<string, string> = { "Accept-Language": "fa" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
+      const submissionExists = (error: unknown) => {
+        if (!(error instanceof ApiError) || (error.status !== 400 && error.status !== 409)) return false;
+        const details = error.details as any;
+        return details?.error?.code === "SUBMISSION_EXISTS"
+          || details?.code === "SUBMISSION_EXISTS"
+          || String(details?.error || "").includes("exists")
+          || String(details?.message || "").includes("exists")
+          || String(details?.non_field_errors || "").includes("Submission already exists");
+      };
 
-      // Try POST first
-      let response = await fetch(`${BASE_URL}/artist/auth/`, {
-        method: "POST",
-        headers,
-        body: formData,
-      });
-
-      let responseData = await response.json().catch(() => ({}));
-
-      // If already exists, use PATCH
-      if (
-        (response.status === 400 || response.status === 409) &&
-        (responseData.error?.code === "SUBMISSION_EXISTS" ||
-          String(responseData.error || "").includes("exists") ||
-          String(responseData.message || "").includes("exists") ||
-          String(responseData.non_field_errors || "").includes("Submission already exists"))
-      ) {
-        response = await fetch(`${BASE_URL}/artist/auth/`, {
-          method: "PATCH",
-          headers,
-          body: formData,
-        });
-        responseData = await response.json().catch(() => ({}));
-      }
-
-      if (!response.ok) {
-        throw new Error(getPersianPayloadMessage(
-          responseData,
-          "ارسال درخواست احراز هویت انجام نشد. لطفاً اطلاعات را بررسی کنید.",
-        ));
+      try {
+        await apiRequest("/artist/auth/", { method: "POST", body: formData });
+      } catch (requestError) {
+        if (!submissionExists(requestError)) throw requestError;
+        await apiRequest("/artist/auth/", { method: "PATCH", body: formData });
       }
 
       const updatedUser: User = {
@@ -527,7 +455,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       };
 
       // Update localStorage
-      localStorage.setItem("sedabox_user", JSON.stringify(updatedUser));
+      artistSession.updateUser(updatedUser);
 
       setUser(updatedUser);
       setVerificationStatus("pending");
@@ -707,9 +635,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         { artist: "true" },
       )) as AuthSessionResponse;
       const { accessToken, refreshToken, user: userData } = data;
-      localStorage.setItem("sedabox_user", JSON.stringify(userData));
-      localStorage.setItem("sedabox_token", accessToken);
-      localStorage.setItem("sedabox_refresh_token", refreshToken);
+      artistSession.save(accessToken, refreshToken, userData);
       setCurrentPhone(phone);
       setUser(userData);
       setIsLoggedIn(true);
@@ -763,9 +689,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const logout = () => {
-    localStorage.removeItem("sedabox_user");
-    localStorage.removeItem("sedabox_token");
-    localStorage.removeItem("sedabox_refresh_token");
+    logoutArtistSession();
     sessionStorage.removeItem("sedabox_artist_verify_phone");
     sessionStorage.removeItem("sedabox_artist_reset_phone");
     sessionStorage.removeItem("sedabox_artist_reset_token");
@@ -787,7 +711,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         ...user,
         verificationStatus: "approved",
       };
-      localStorage.setItem("sedabox_user", JSON.stringify(updatedUser));
+      artistSession.updateUser(updatedUser);
       setUser(updatedUser);
       setVerificationStatus("approved");
     }
@@ -808,7 +732,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             verificationStatus: status,
             verificationData: auth,
           };
-          localStorage.setItem("sedabox_user", JSON.stringify(updatedUser));
+          artistSession.updateUser(updatedUser);
           setUser(updatedUser);
         }
         setVerificationStatus(status);
@@ -819,7 +743,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const clearedUser = { ...user } as User;
           delete (clearedUser as any).verificationData;
           clearedUser.verificationStatus = "none";
-          localStorage.setItem("sedabox_user", JSON.stringify(clearedUser));
+          artistSession.updateUser(clearedUser);
           setUser(clearedUser);
         }
         setVerificationStatus("none");

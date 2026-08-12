@@ -67,6 +67,15 @@ const Sidebar: React.FC = () => {
       ),
     },
     {
+      id: "tickets",
+      label: "پشتیبانی و تیکت‌ها",
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h8M8 14h5m8-2a9 9 0 11-4.219-7.628A9 9 0 0121 12z" />
+        </svg>
+      ),
+    },
+    {
       id: "settings",
       label: "تنظیمات",
       icon: (
@@ -127,7 +136,7 @@ const Sidebar: React.FC = () => {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3">
+      <nav className="flex-1 overflow-y-auto px-3 pb-2">
         <ul className="space-y-2">
           {menuItems.map((item) => (
             <li key={item.id}>

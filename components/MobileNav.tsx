@@ -84,6 +84,15 @@ const MobileNav: React.FC = () => {
       ),
     },
     {
+      id: "tickets",
+      label: "پشتیبانی و تیکت‌ها",
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h8M8 14h5m8-2a9 9 0 11-4.219-7.628A9 9 0 0121 12z" />
+        </svg>
+      ),
+    },
+    {
       id: "terms",
       label: "شرایط و ضوابط",
       icon: (

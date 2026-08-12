@@ -329,6 +329,7 @@ const TopNav: React.FC = () => {
                 { id: "releases", label: "انتشارها", icon: "💿" },
                 { id: "analytics", label: "تحلیل و آمار", icon: "📊" },
                 { id: "financial", label: "گزارش مالی", icon: "💰" },
+                { id: "tickets", label: "پشتیبانی و تیکت‌ها", icon: "💬" },
                 { id: "settings", label: "تنظیمات", icon: "⚙️" },
                 { id: "terms", label: "شرایط و ضوابط", icon: "📄" },
               ].map((item) => (

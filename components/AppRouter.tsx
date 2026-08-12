@@ -20,6 +20,7 @@ import PendingVerificationModal from "./verification/PendingVerificationModal";
 import SongDetail from "./SongDetail";
 import AlbumDetail from "./AlbumDetail";
 import TermsAndConditions from "./TermsAndConditions";
+import SupportTickets from "./SupportTickets";
 
 const AppRouter: React.FC = () => {
   const { currentPage, currentParams, navigateTo } = useNavigation();
@@ -118,6 +119,7 @@ const AppRouter: React.FC = () => {
         {renderPageContainer("financial", <Financial />)}
         {renderPageContainer("settings", <Settings />)}
         {renderPageContainer("terms", <TermsAndConditions />)}
+        {renderPageContainer("tickets", <SupportTickets />)}
         {renderPageContainer("search", <div>صفحه جست‌وجو</div>)}
         {renderPageContainer("playlists", <div>صفحه فهرست‌های پخش</div>)}
         {renderPageContainer("profile", <div>صفحه پروفایل</div>)}

@@ -8,7 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { API_BASE_URL, apiRequest } from "../lib/api";
+import { API_BASE_URL, apiRequest, artistSession, getFreshArtistAccessToken } from "../lib/api";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
 
@@ -133,30 +133,6 @@ const buildSocketUrl = (): string => {
   } catch {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${protocol}//${window.location.host}/ws/notifications/?role=${NOTIFICATION_ROLE}`;
-  }
-};
-
-const freshAccessToken = async (forceRefresh = false): Promise<string | null> => {
-  const current = localStorage.getItem("sedabox_token");
-  if (current && !forceRefresh) return current;
-  const refreshToken = localStorage.getItem("sedabox_refresh_token");
-  if (!refreshToken) return null;
-  try {
-    const response = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ refreshToken }),
-      cache: "no-store",
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok || !body?.accessToken) return null;
-    localStorage.setItem("sedabox_token", String(body.accessToken));
-    if (body.refreshToken) {
-      localStorage.setItem("sedabox_refresh_token", String(body.refreshToken));
-    }
-    return String(body.accessToken);
-  } catch {
-    return null;
   }
 };
 
@@ -343,7 +319,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
       ) return;
       setRealtimeStatus(reconnectAttempt ? "reconnecting" : "connecting");
-      const token = await freshAccessToken(forceRefreshBeforeConnect);
+      const token = await getFreshArtistAccessToken(forceRefreshBeforeConnect);
       forceRefreshBeforeConnect = false;
       if (disposed || !token) {
         if (!disposed) setRealtimeStatus("disabled");
@@ -386,7 +362,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         if (
           rejectedBeforeAccept &&
           tokenUsed &&
-          tokenUsed === localStorage.getItem("sedabox_token")
+          tokenUsed === artistSession.access()
         ) {
           forceRefreshBeforeConnect = true;
         }

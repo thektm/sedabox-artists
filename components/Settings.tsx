@@ -20,7 +20,7 @@ import {
   UserRound,
   Youtube,
 } from "lucide-react";
-import { apiRequest, getApiErrorMessage } from "../lib/api";
+import { apiRequest, artistSession, getApiErrorMessage } from "../lib/api";
 import { useToast } from "../contexts/ToastContext";
 import { useImageCropper } from "../contexts/ImageCropperContext";
 
@@ -233,12 +233,9 @@ const Settings: React.FC = () => {
       const updated = await apiRequest<ArtistSettingsResponse>("/artist/settings/", { method: "PATCH", body: form });
       applyArtist(updated);
       if (typeof window !== "undefined") {
-        const raw = localStorage.getItem("sedabox_user");
-        if (raw) {
-          try {
-            const stored = JSON.parse(raw);
-            localStorage.setItem("sedabox_user", JSON.stringify({ ...stored, name: updated.name, artistName: updated.artistic_name, email: updated.email }));
-          } catch { /* invalid legacy cache is non-blocking */ }
+        const stored = artistSession.user<Record<string, unknown>>();
+        if (stored) {
+          artistSession.updateUser({ ...stored, name: updated.name, artistName: updated.artistic_name, email: updated.email });
         }
       }
       showToast(tab === "profile" ? "اطلاعات پروفایل هنرمند با موفقیت ذخیره شد." : tab === "social" ? "پیوندهای شبکه‌های اجتماعی با موفقیت ذخیره شدند." : "تصاویر هنرمند با موفقیت ذخیره شدند.", "success");

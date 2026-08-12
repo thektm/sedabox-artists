@@ -1,5 +1,5 @@
 import React, { createContext, ReactNode, useContext, useEffect, useState } from "react";
-import { apiRequest } from "../lib/api";
+import { apiRequest, artistSession } from "../lib/api";
 
 interface LiveListenersContextType {
   liveListeners: number;
@@ -40,7 +40,7 @@ export const LiveListenersProvider: React.FC<{ children: ReactNode }> = ({ child
     const controller = new AbortController();
 
     const poll = async () => {
-      if (!localStorage.getItem("sedabox_token")) return;
+      if (!artistSession.access() && !artistSession.refresh()) return;
       setIsPolling(true);
       let retryDelay = 2_000;
 
