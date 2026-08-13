@@ -235,7 +235,7 @@ const Settings: React.FC = () => {
       if (typeof window !== "undefined") {
         const stored = artistSession.user<Record<string, unknown>>();
         if (stored) {
-          artistSession.updateUser({ ...stored, name: updated.name, artistName: updated.artistic_name, email: updated.email });
+          artistSession.updateUser({ ...stored, name: updated.name, artistName: updated.artistic_name || updated.name, artistProfileImage: updated.profile_image || "", email: updated.email });
         }
       }
       showToast(tab === "profile" ? "اطلاعات پروفایل هنرمند با موفقیت ذخیره شد." : tab === "social" ? "پیوندهای شبکه‌های اجتماعی با موفقیت ذخیره شدند." : "تصاویر هنرمند با موفقیت ذخیره شدند.", "success");

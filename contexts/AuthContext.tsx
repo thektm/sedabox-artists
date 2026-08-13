@@ -24,6 +24,7 @@ interface User {
   phone: string;
   email?: string;
   artistName?: string;
+  artistProfileImage?: string;
   verificationStatus?: VerificationStatus;
   verificationType?: "new" | "existing";
   verificationData?: any;

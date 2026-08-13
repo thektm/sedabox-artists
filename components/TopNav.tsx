@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigation } from "../contexts/NavigationContext";
 import { useAuth } from "../contexts/AuthContext";
+import { apiRequest, artistSession, resolveMediaUrl } from "../lib/api";
 import { useResponsive } from "../hooks/useResponsive";
 import ConfirmModal from "./ConfirmModal";
 import { useNotifications } from "../contexts/NotificationContext";
 
 const TopNav: React.FC = () => {
   const { currentPage, navigateTo } = useNavigation();
-  const { user, logout } = useAuth();
+  const { user, logout, verificationStatus } = useAuth();
   const { isMobile, isTablet } = useResponsive();
   const showMobileLayout = isMobile || isTablet;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -26,6 +27,67 @@ const TopNav: React.FC = () => {
   } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [removingIds, setRemovingIds] = useState<Set<number>>(new Set());
+  const [profileImageFailed, setProfileImageFailed] = useState(false);
+
+  const approvedIdentity = verificationStatus === "approved";
+  const artistDisplayName = (
+    approvedIdentity
+      ? user?.artistName || user?.name || "هنرمند"
+      : user?.name || "هنرمند"
+  ).trim();
+  const artistProfileImage = approvedIdentity
+    ? resolveMediaUrl(user?.artistProfileImage)
+    : "";
+
+  useEffect(() => {
+    setProfileImageFailed(false);
+  }, [artistProfileImage]);
+
+  useEffect(() => {
+    if (verificationStatus !== "approved") return;
+    let cancelled = false;
+
+    const hydrateApprovedArtistIdentity = async () => {
+      try {
+        const profile = await apiRequest<{
+          name?: string;
+          artistic_name?: string;
+          profile_image?: string | null;
+        }>("/artist/settings/");
+        if (cancelled) return;
+
+        const stored = artistSession.user<Record<string, unknown>>();
+        if (!stored) return;
+
+        const nextName = String(profile.name || stored.name || "").trim();
+        const nextArtistName = String(profile.artistic_name || nextName || "").trim();
+        const nextProfileImage = String(profile.profile_image || "").trim();
+        const currentArtistName = String(stored.artistName || "").trim();
+        const currentProfileImage = String(stored.artistProfileImage || "").trim();
+        const currentName = String(stored.name || "").trim();
+
+        if (
+          nextArtistName !== currentArtistName ||
+          nextProfileImage !== currentProfileImage ||
+          nextName !== currentName
+        ) {
+          artistSession.updateUser({
+            ...stored,
+            name: nextName || currentName,
+            artistName: nextArtistName || nextName || currentArtistName,
+            artistProfileImage: nextProfileImage,
+          });
+        }
+      } catch {
+        // Header identity is non-critical; keep the persisted fallback without affecting auth.
+      }
+    };
+
+    void hydrateApprovedArtistIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, [verificationStatus]);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -470,18 +532,27 @@ const TopNav: React.FC = () => {
             </svg>
           </button>
 
-          {/* User Profile */}
-          <div className="flex items-center gap-3 pl-4 border-r border-[#282828]">
-            <div className="w-8 h-8 bg-gradient-to-br from-[#1DB954] to-[#1ed760] rounded-full flex items-center justify-center text-white font-bold text-sm">
-              {user?.name?.charAt(0) || "ح"}
+          {/* Artist identity */}
+          <div className="flex min-w-0 items-center gap-3 border-r border-[#282828] pl-4">
+            <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-gradient-to-br from-[#1DB954] to-[#1ed760] ring-1 ring-white/10">
+              {artistProfileImage && !profileImageFailed ? (
+                <img
+                  src={artistProfileImage}
+                  alt={artistDisplayName}
+                  className="h-full w-full object-cover"
+                  onError={() => setProfileImageFailed(true)}
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-sm font-black text-white">
+                  {artistDisplayName.charAt(0) || "ه"}
+                </div>
+              )}
             </div>
-            <div className="hidden lg:block">
-              <p className="text-white font-semibold text-sm">
-                {user?.name || "هنرمند"}
+            <div className="hidden min-w-0 lg:block">
+              <p className="max-w-44 truncate text-sm font-semibold text-white" title={artistDisplayName}>
+                {artistDisplayName}
               </p>
-              <p className="text-[#B3B3B3] text-xs">
-                {user?.artistName || "هنرمند"}
-              </p>
+              <p className="text-xs text-[#B3B3B3]">هنرمند صداباکس</p>
             </div>
           </div>
         </div>
